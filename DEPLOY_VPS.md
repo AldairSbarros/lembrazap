@@ -99,7 +99,9 @@ Aguarde propagar (normalmente minutos). Teste: `getent hosts lembrazap.aletheia.
 ### 5.2 Bloco HTTP (antes do certificado)
 
 Adicione ao config do nginx (o mesmo arquivo `default` da VPS, ou um
-`sites-available/lembrazap` novo com symlink em `sites-enabled`):
+`sites-available/lembrazap` novo com symlink em `sites-enabled`). O bloco abaixo
+também está versionado em [`deploy/nginx-lembrazap.conf`](deploy/nginx-lembrazap.conf)
+— é só copiar e colar no fim do `default` (não mexe em nada do que já existe):
 
 ```nginx
 # --- LEMBRAZAP (painel + API + webhook no mesmo container, porta 8050) ---
