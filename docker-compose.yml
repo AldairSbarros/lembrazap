@@ -1,0 +1,31 @@
+# Sobe o LembraZap ao lado do AletheIA, na mesma rede externa do OpenResty.
+# A porta fica presa em 127.0.0.1: o acesso público deve passar pelo proxy reverso
+# (location /lembrazap/), nunca direto — igual ao backend do AletheIA.
+services:
+  lembrazap:
+    build: .
+    container_name: lembrazap
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8050:8050"
+    env_file:
+      - .env
+    volumes:
+      - ./dados:/app/dados
+    networks:
+      - icontainer-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  icontainer-network:
+    external: true

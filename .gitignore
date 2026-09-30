@@ -1,0 +1,26 @@
+# Segredos e configuração local — NUNCA commitar
+.env
+*.env
+!.env.example
+
+# Banco de dados (os JSON são o banco inteiro) e backups
+dados/
+dados_teste/
+*.tar.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs e artefatos de teste
+*.log
+server_teste.log
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

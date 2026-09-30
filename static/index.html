@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LembraZap — Remarketing por WhatsApp</title>
+<style>
+  :root {
+    --verde: #25d366; --verde-esc: #128c4b; --azul: #1a237e;
+    --cinza: #6b7280; --borda: #e5e7eb; --fundo: #f6f7fb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fundo); color: #111827; }
+  header { background: var(--azul); color: #fff; padding: 14px 22px; display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 19px; font-weight: 700; }
+  header .tag { font-size: 11px; background: rgba(255,255,255,.18); padding: 3px 9px; border-radius: 999px; }
+  header .sair { margin-left: auto; background: none; border: 1px solid rgba(255,255,255,.4); color: #fff;
+                 padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  nav { display: flex; gap: 4px; padding: 10px 22px 0; background: #fff; border-bottom: 1px solid var(--borda); flex-wrap: wrap; }
+  nav button { border: none; background: none; padding: 10px 16px; cursor: pointer; font-size: 14px;
+               color: var(--cinza); border-bottom: 3px solid transparent; }
+  nav button.ativo { color: var(--azul); font-weight: 600; border-bottom-color: var(--azul); }
+  main { max-width: 980px; margin: 22px auto; padding: 0 18px; }
+  .cartao { background: #fff; border: 1px solid var(--borda); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  .cartao h2 { font-size: 16px; margin-bottom: 6px; color: var(--azul); }
+  .cartao p.desc { font-size: 13px; color: var(--cinza); margin-bottom: 14px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin: 10px 0 4px; }
+  input, textarea, select { width: 100%; padding: 9px 11px; border: 1px solid var(--borda); border-radius: 8px;
+                            font-size: 14px; font-family: inherit; }
+  textarea { min-height: 84px; resize: vertical; }
+  button.primario { background: var(--verde); color: #fff; border: none; padding: 10px 18px; border-radius: 9px;
+                    font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 12px; }
+  button.primario:hover { background: var(--verde-esc); }
+  button.secundario { background: #fff; color: var(--azul); border: 1px solid var(--azul); padding: 9px 16px;
+                      border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th { text-align: left; color: var(--cinza); font-size: 11px; text-transform: uppercase; padding: 7px 8px;
+       border-bottom: 1px solid var(--borda); }
+  td { padding: 8px; border-bottom: 1px solid #f1f2f6; }
+  .pill { font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600; }
+  .pill.ok { background: #dcfce7; color: #166534; } .pill.pendente { background: #fef9c3; color: #854d0e; }
+  .pill.falha { background: #fee2e2; color: #991b1b; } .pill.opt_out { background: #e5e7eb; color: #374151; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .aviso { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; font-size: 13px;
+           padding: 10px 14px; border-radius: 9px; margin-bottom: 14px; }
+  .tokenbox { background: #111827; color: #a7f3d0; font-family: monospace; font-size: 13px; padding: 12px;
+              border-radius: 9px; word-break: break-all; margin: 10px 0; }
+  .linha { display: flex; gap: 8px; align-items: center; }
+  .mini { background: none; border: 1px solid var(--borda); border-radius: 6px; padding: 3px 8px;
+          font-size: 11px; cursor: pointer; color: var(--cinza); }
+  #qr img { width: 224px; height: 224px; border: 1px solid var(--borda); border-radius: 12px; display: block; margin: 10px auto; }
+  .centro { text-align: center; } .oculto { display: none; }
+  .erro { color: #991b1b; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ══ ONBOARDING (sem token) ══ -->
+<div id="onboarding" class="oculto">
+  <main>
+    <div class="cartao" style="max-width:460px;margin:8vh auto;">
+      <h2>Criar minha conta</h2>
+      <p class="desc">Reative clientes inativos e lembre compromissos pelo WhatsApp do seu negócio.</p>
+      <label>Nome do negócio</label>
+      <input id="ob-nome" placeholder="Ex.: Studio Bella Unhas">
+      <label>Segmento</label>
+      <input id="ob-negocio" placeholder="Ex.: salão de beleza">
+      <button class="primario" onclick="criarConta()">Criar conta</button>
+      <div id="ob-resultado" class="oculto">
+        <p class="desc" style="margin-top:14px;">Guarde este token — ele é mostrado uma única vez e é a senha do painel:</p>
+        <div class="tokenbox" id="ob-token"></div>
+        <button class="secundario" onclick="copiarToken()">Copiar token</button>
+        <button class="primario" onclick="entrarComToken()">Entrar no painel</button>
+      </div>
+      <label style="margin-top:22px;">Já tenho token</label>
+      <div class="linha">
+        <input id="ob-token-entrada" placeholder="cole seu token">
+        <button class="secundario" style="margin-top:0;" onclick="entrarDigitado()">Entrar</button>
+      </div>
+      <div id="ob-erro" class="erro"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ══ PAINEL ══ -->
+<div id="painel" class="oculto">
+  <header>
+    <h1>LembraZap</h1>
+    <span class="tag" id="hd-negocio"></span>
+    <span class="tag" id="hd-modo"></span>
+    <button class="sair" onclick="sair()">Sair</button>
+  </header>
+  <nav>
+    <button data-aba="conexao" class="ativo" onclick="trocarAba('conexao')">Conexão</button>
+    <button data-aba="clientes" onclick="trocarAba('clientes')">Clientes</button>
+    <button data-aba="reativacao" onclick="trocarAba('reativacao')">Reativação</button>
+    <button data-aba="agenda" onclick="trocarAba('agenda')">Agenda</button>
+    <button data-aba="envios" onclick="trocarAba('envios')">Enviados</button>
+    <button data-aba="config" onclick="trocarAba('config')">Configuração</button>
+  </nav>
+  <main>
+    <!-- Conexão -->
+    <section id="aba-conexao">
+      <div class="cartao centro">
+        <h2>Conecte o WhatsApp do negócio</h2>
+        <p class="desc">Escaneie com o número que vai enviar as mensagens:
+          WhatsApp → Aparelhos conectados → Conectar aparelho. O QR expira rápido; gere outro se precisar.</p>
+        <div id="qr"></div>
+        <p id="conexao-status" class="desc"></p>
+        <button class="primario" onclick="gerarQr()">Gerar / atualizar QR Code</button>
+      </div>
+    </section>
+    <!-- Clientes -->
+    <section id="aba-clientes" class="oculto">
+      <div class="cartao">
+        <h2>Adicionar cliente</h2>
+        <div class="grid2">
+          <div><label>Nome</label><input id="cl-nome"></div>
+          <div><label>Telefone (DDD + número)</label><input id="cl-tel" placeholder="11 98765-4321"></div>
+          <div><label>Última visita</label><input id="cl-visita" placeholder="dd/mm/aaaa"></div>
+          <div><label>Observação</label><input id="cl-obs"></div>
+        </div>
+        <button class="primario" onclick="addCliente()">Adicionar</button>
+      </div>
+      <div class="cartao">
+        <h2>Importar CSV</h2>
+        <p class="desc">Cole uma linha por cliente: <code>nome;telefone;ultima_visita;obs</code></p>
+        <textarea id="cl-csv" placeholder="Maria Silva;11 98765-4321;10/06/2026;prefere manhã"></textarea>
+        <button class="primario" onclick="importarCsv()">Importar</button>
+        <span id="cl-import-resultado" class="desc"></span>
+      </div>
+      <div class="cartao">
+        <h2>Base de clientes</h2>
+        <table><thead><tr><th>Nome</th><th>Telefone</th><th>Última visita</th><th>Status</th><th></th></tr></thead>
+        <tbody id="tb-clientes"></tbody></table>
+      </div>
+    </section>
+    <!-- Reativação -->
+    <section id="aba-reativacao" class="oculto">
+      <div class="cartao">
+        <h2>Campanha de reativação</h2>
+        <p class="desc">Mensagem personalizada para quem não visita há algum tempo.
+          Os envios respeitam o limite diário e o intervalo anti-ban da configuração.</p>
+        <div class="grid2">
+          <div><label>Sem visitar há pelo menos (dias)</label><input id="re-dias" type="number" value="60"></div>
+          <div><label>&nbsp;</label><button class="secundario" style="margin-top:0;" onclick="previa()">Ver prévia</button></div>
+        </div>
+        <label>Mensagem (opcional — vazio usa o template da conta)</label>
+        <textarea id="re-msg" placeholder="Olá, {nome}! Sentimos sua falta aqui na {negocio} — já faz {dias} dias..."></textarea>
+        <p class="desc" id="re-contagem"></p>
+        <button class="primario" onclick="disparar()">Disparar campanha</button>
+      </div>
+      <div class="cartao">
+        <h2>Prévia</h2>
+        <table><thead><tr><th>Nome</th><th>Telefone</th><th>Dias sem visitar</th></tr></thead>
+        <tbody id="tb-previa"></tbody></table>
+      </div>
+    </section>
+    <!-- Agenda -->
+    <section id="aba-agenda" class="oculto">
+      <div class="cartao">
+        <h2>Novo compromisso</h2>
+        <p class="desc">O lembrete entra na fila sozinho, com a antecedência configurada.</p>
+        <div class="grid2">
+          <div><label>Nome do cliente</label><input id="ag-nome"></div>
+          <div><label>Telefone</label><input id="ag-tel"></div>
+          <div><label>Quando</label><input id="ag-quando" placeholder="2026-10-05T14:30"></div>
+          <div><label>Mensagem própria (opcional)</label><input id="ag-msg"></div>
+        </div>
+        <button class="primario" onclick="addAgenda()">Agendar lembrete</button>
+      </div>
+      <div class="cartao">
+        <h2>Compromissos</h2>
+        <table><thead><tr><th>Nome</th><th>Quando</th><th>Status</th><th></th></tr></thead>
+        <tbody id="tb-agenda"></tbody></table>
+      </div>
+    </section>
+    <!-- Enviados -->
+    <section id="aba-envios" class="oculto">
+      <div class="cartao">
+        <h2>Log de envios</h2>
+        <div class="linha"><label style="margin:0;">Filtrar</label>
+          <select id="en-filtro" onchange="carregarEnvios()" style="width:auto;">
+            <option value="">todos</option><option value="pendente">pendentes</option>
+            <option value="enviado">enviados</option><option value="falha">falhas</option>
+            <option value="opt_out">opt-out</option>
+          </select>
+        </div>
+        <table><thead><tr><th>Quando</th><th>Campanha</th><th>Telefone</th><th>Status</th><th>Mensagem</th></tr></thead>
+        <tbody id="tb-envios"></tbody></table>
+      </div>
+    </section>
+    <!-- Configuração -->
+    <section id="aba-config" class="oculto">
+      <div class="cartao">
+        <h2>Proteções de envio</h2>
+        <div class="aviso">WhatsApp bloqueia números que disparam em massa. Estes limites existem para
+          proteger o número do negócio — não os reduza sem necessidade.</div>
+        <div class="grid2">
+          <div><label>Máximo de envios por dia</label><input id="cf-limite" type="number"></div>
+          <div><label>Intervalo entre mensagens (seg)</label><input id="cf-intervalo" type="number"></div>
+          <div><label>Antecedência do lembrete (horas)</label><input id="cf-antec" type="number"></div>
+        </div>
+        <label>Template de reativação</label>
+        <textarea id="cf-tpl-re"></textarea>
+        <label>Template de lembrete</label>
+        <textarea id="cf-tpl-le"></textarea>
+        <label style="margin-top:16px;">
+          <input type="checkbox" id="cf-auto-sim" style="width:auto; margin-right:8px;">
+          Responder automaticamente quem responder SIM à campanha de reativação
+        </label>
+        <label>Template da resposta ao SIM</label>
+        <textarea id="cf-tpl-sim"></textarea>
+        <label style="margin-top:16px;">
+          <input type="checkbox" id="cf-ia-agenda" style="width:auto; margin-right:8px;">
+          Reservar sozinho quando o cliente propor dia e horário (usa IA; sem chave configurada, usa parser local)
+        </label>
+        <label>Template de confirmação de reserva</label>
+        <textarea id="cf-tpl-conf"></textarea>
+        <button class="primario" onclick="salvarConfig()">Salvar configuração</button>
+        <span id="cf-ok" class="desc"></span>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const TOKEN_KEY = 'lz_token';
+let token = localStorage.getItem(TOKEN_KEY) || '';
+let timerQr = null;
+
+// Prefixo dinâmico: funciona na raiz (dev) e atrás de proxy (/lembrazap/).
+// Se o caminho for uma rota do app (/api/..., /webhook/...), corta a partir dela;
+// o que sobrar antes é o prefixo do proxy.
+const PREFIXO = (() => {
+  const partes = location.pathname.split('/').filter(Boolean);
+  const rotas = new Set(['api', 'webhook', 'static', 'healthz']);
+  const corte = partes.findIndex((p) => rotas.has(p));
+  if (corte >= 0) partes.length = corte;
+  return partes.length ? '/' + partes.join('/') : '';
+})();
+
+async function api(caminho, opcoes = {}) {
+  const resp = await fetch(PREFIXO + caminho, {
+    ...opcoes,
+    headers: { 'Content-Type': 'application/json', 'X-LZ-Token': token, ...(opcoes.headers || {}) },
+  });
+  if (resp.status === 401) { sair(); throw new Error('Sessão inválida.'); }
+  if (!resp.ok) {
+    const corpo = await resp.json().catch(() => ({}));
+    throw new Error(corpo.detail || ('Erro ' + resp.status));
+  }
+  return resp.json();
+}
+
+function mostrar(el, visivel) { document.getElementById(el).classList.toggle('oculto', !visivel); }
+
+function sair() {
+  localStorage.removeItem(TOKEN_KEY); token = '';
+  if (timerQr) clearInterval(timerQr);
+  mostrar('painel', false); mostrar('onboarding', true);
+}
+
+async function criarConta() {
+  const erro = document.getElementById('ob-erro'); erro.textContent = '';
+  try {
+    const r = await fetch(PREFIXO + '/api/contas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome: document.getElementById('ob-nome').value,
+                             negocio: document.getElementById('ob-negocio').value }),
+    }).then(r => r.json());
+    document.getElementById('ob-token').textContent = r.token;
+    mostrar('ob-resultado', true);
+    localStorage.setItem(TOKEN_KEY, r.token); token = r.token;
+  } catch (e) { erro.textContent = e.message; }
+}
+function copiarToken() { navigator.clipboard.writeText(document.getElementById('ob-token').textContent); }
+function entrarComToken() { iniciar(); }
+function entrarDigitado() {
+  token = document.getElementById('ob-token-entrada').value.trim();
+  localStorage.setItem(TOKEN_KEY, token); iniciar();
+}
+
+async function iniciar() {
+  try {
+    const conta = await api('/api/conta');
+    document.getElementById('hd-negocio').textContent = conta.negocio;
+    document.getElementById('hd-modo').textContent = conta.simulacao ? 'modo simulação' : 'ao vivo';
+    mostrar('onboarding', false); mostrar('painel', true);
+    trocarAba('conexao');
+  } catch (e) { sair(); }
+}
+
+function trocarAba(nome) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('ativo', b.dataset.aba === nome));
+  ['conexao','clientes','reativacao','agenda','envios','config'].forEach(a =>
+    mostrar('aba-' + a, a === nome));
+  if (timerQr) { clearInterval(timerQr); timerQr = null; }
+  if (nome === 'conexao') { atualizarStatus(); timerQr = setInterval(atualizarStatus, 6000); }
+  if (nome === 'clientes') carregarClientes();
+  if (nome === 'agenda') carregarAgenda();
+  if (nome === 'envios') carregarEnvios();
+  if (nome === 'config') carregarConfig();
+}
+
+async function gerarQr() {
+  const qr = document.getElementById('qr');
+  try {
+    await api('/api/conexao/criar', { method: 'POST' });
+    const r = await api('/api/conexao/qrcode');
+    qr.innerHTML = r.base64 ? `<img src="${r.base64}" alt="QR Code">` : '<p class="erro">Sem QR.</p>';
+  } catch (e) { qr.innerHTML = `<p class="erro">${e.message}</p>`; }
+  atualizarStatus();
+}
+async function atualizarStatus() {
+  try {
+    const r = await api('/api/conexao/status');
+    document.getElementById('conexao-status').textContent = r.conectado
+      ? 'Conectado e pronto para enviar.' : `Aguardando pareamento… (estado: ${r.estado || 'sem instância'})`;
+  } catch (e) { /* silencioso: polling */ }
+}
+
+async function carregarClientes() {
+  const r = await api('/api/clientes');
+  document.getElementById('tb-clientes').innerHTML = r.clientes.map(c => `
+    <tr><td>${c.nome}</td><td>${c.telefone}</td><td>${c.ultima_visita}</td>
+    <td><span class="pill ${c.opt_out ? 'opt_out' : 'ok'}">${c.opt_out ? 'opt-out' : 'ativo'}</span>
+        ${c.respondeu_em ? '<span class="pill pendente">respondeu SIM</span>' : ''}</td>
+    <td><button class="mini" onclick="toggleOptOut('${c.id}', ${!c.opt_out})">${c.opt_out ? 'reativar' : 'opt-out'}</button>
+        <button class="mini" onclick="removerCliente('${c.id}')">excluir</button></td></tr>`).join('')
+    || '<tr><td colspan="5">Nenhum cliente ainda.</td></tr>';
+}
+async function addCliente() {
+  await api('/api/clientes', { method: 'POST', body: JSON.stringify({
+    nome: document.getElementById('cl-nome').value, telefone: document.getElementById('cl-tel').value,
+    ultima_visita: document.getElementById('cl-visita').value, obs: document.getElementById('cl-obs').value }) });
+  ['cl-nome','cl-tel','cl-visita','cl-obs'].forEach(i => document.getElementById(i).value = '');
+  carregarClientes();
+}
+async function importarCsv() {
+  const r = await api('/api/clientes/importar', { method: 'POST',
+    body: JSON.stringify({ csv: document.getElementById('cl-csv').value }) });
+  document.getElementById('cl-import-resultado').textContent =
+    ` ${r.importados} importados, ${r.ignorados} ignorados.`;
+  document.getElementById('cl-csv').value = '';
+  carregarClientes();
+}
+async function toggleOptOut(id, valor) {
+  await api(`/api/clientes/${id}/optout`, { method: 'POST', body: JSON.stringify({ opt_out: valor }) });
+  carregarClientes();
+}
+async function removerCliente(id) {
+  if (confirm('Excluir este cliente?')) { await api(`/api/clientes/${id}`, { method: 'DELETE' }); carregarClientes(); }
+}
+
+let previaAtual = [];
+async function previa() {
+  const dias = +document.getElementById('re-dias').value;
+  const r = await api(`/api/reativacao/preview?dias=${dias}`);
+  previaAtual = r.elegiveis;
+  document.getElementById('re-contagem').textContent =
+    `${r.elegiveis.length} cliente(s) elegível(is) para ${dias}+ dias de inatividade.`;
+  document.getElementById('tb-previa').innerHTML = r.elegiveis.map(c =>
+    `<tr><td>${c.nome}</td><td>${c.telefone}</td><td>${c.dias_sem_visitar}</td></tr>`).join('')
+    || '<tr><td colspan="3">Ninguém elegível com esse corte.</td></tr>';
+}
+async function disparar() {
+  if (!previaAtual.length) { await previa(); }
+  if (!confirm(`Enfileirar ${previaAtual.length} mensagem(ns) de reativação?`)) return;
+  const r = await api('/api/reativacao/disparar', { method: 'POST', body: JSON.stringify({
+    dias: +document.getElementById('re-dias').value, mensagem: document.getElementById('re-msg').value }) });
+  alert(`${r.enfileirados} mensagem(ns) na fila. Acompanhe na aba Enviados.`);
+  previaAtual = [];
+}
+
+async function carregarAgenda() {
+  const r = await api('/api/agenda');
+  document.getElementById('tb-agenda').innerHTML = r.agenda.map(i => `
+    <tr><td>${i.nome || i.telefone}</td><td>${i.quando}</td>
+    <td><span class="pill ${i.status === 'enviado' ? 'ok' : i.status === 'agendado' ? 'pendente' : 'opt_out'}">${i.status}</span>
+        ${i.origem === 'ia' ? '<span class="pill opt_out">via IA</span>' : ''}</td>
+    <td>${i.status === 'agendado' ? `<button class="mini" onclick="cancelarAgenda('${i.id}')">cancelar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="4">Nenhum compromisso.</td></tr>';
+}
+async function addAgenda() {
+  await api('/api/agenda', { method: 'POST', body: JSON.stringify({
+    nome: document.getElementById('ag-nome').value, telefone: document.getElementById('ag-tel').value,
+    quando: document.getElementById('ag-quando').value, mensagem: document.getElementById('ag-msg').value }) });
+  ['ag-nome','ag-tel','ag-quando','ag-msg'].forEach(i => document.getElementById(i).value = '');
+  carregarAgenda();
+}
+async function cancelarAgenda(id) { await api(`/api/agenda/${id}`, { method: 'DELETE' }); carregarAgenda(); }
+
+async function carregarEnvios() {
+  const filtro = document.getElementById('en-filtro').value;
+  const r = await api(`/api/envios?status=${filtro}`);
+  document.getElementById('tb-envios').innerHTML = r.envios.map(e => `
+    <tr><td>${e.enviado_em || e.criado_em}</td><td>${e.campanha}</td><td>…${e.telefone.slice(-4)}</td>
+    <td><span class="pill ${e.status === 'enviado' ? 'ok' : e.status === 'pendente' ? 'pendente' : e.status === 'falha' ? 'falha' : 'opt_out'}">${e.status}${e.simulado ? ' (sim)' : ''}</span></td>
+    <td title="${(e.texto || '').replace(/"/g, '&quot;')}">${(e.texto || '').slice(0, 60)}…</td></tr>`).join('')
+    || '<tr><td colspan="5">Nada por aqui ainda.</td></tr>';
+}
+
+async function carregarConfig() {
+  const r = await api('/api/configuracao');
+  document.getElementById('cf-limite').value = r.config.limite_diario;
+  document.getElementById('cf-intervalo').value = r.config.intervalo_seg;
+  document.getElementById('cf-antec').value = r.config.antecedencia_horas;
+  document.getElementById('cf-tpl-re').value = r.config.template_reativacao;
+  document.getElementById('cf-tpl-le').value = r.config.template_lembrete;
+  document.getElementById('cf-auto-sim').checked = !!r.config.resposta_auto_ativa;
+  document.getElementById('cf-tpl-sim').value = r.config.template_resposta_sim;
+  document.getElementById('cf-ia-agenda').checked = !!r.config.ia_agendamento_ativa;
+  document.getElementById('cf-tpl-conf').value = r.config.template_confirmacao;
+}
+async function salvarConfig() {
+  await api('/api/configuracao', { method: 'PUT', body: JSON.stringify({
+    limite_diario: +document.getElementById('cf-limite').value,
+    intervalo_seg: +document.getElementById('cf-intervalo').value,
+    antecedencia_horas: +document.getElementById('cf-antec').value,
+    resposta_auto_ativa: document.getElementById('cf-auto-sim').checked,
+    ia_agendamento_ativa: document.getElementById('cf-ia-agenda').checked,
+    template_reativacao: document.getElementById('cf-tpl-re').value,
+    template_lembrete: document.getElementById('cf-tpl-le').value,
+    template_resposta_sim: document.getElementById('cf-tpl-sim').value,
+    template_confirmacao: document.getElementById('cf-tpl-conf').value }) });
+  document.getElementById('cf-ok').textContent = ' Salvo.';
+}
+
+if (token) iniciar(); else mostrar('onboarding', true);
+</script>
+</body>
+</html>
