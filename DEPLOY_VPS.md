@@ -37,7 +37,7 @@ Preencha:
 | `EVOLUTION_API_URL` | **o mesmo** do `docker-compose.yml` do AletheIA (ex.: `http://evolution-api:8080`) |
 | `EVOLUTION_API_KEY` | **a mesma** do AletheIA |
 | `MODO_SIMULACAO` | `0` em produção |
-| `WEBHOOK_PUBLIC_URL` | `https://aletheia.ia.br/lembrazap` (sem barra no fim) |
+| `WEBHOOK_PUBLIC_URL` | `https://lembrazap.aletheia.ia.br` (sem barra no fim) |
 | `GROQ_API_KEY` | opcional — liga o agendamento por IA de verdade |
 | `GEMINI_API_KEY` | opcional — fallback da IA |
 
@@ -46,8 +46,11 @@ automático usa o parser local (entende "amanhã às 14:30", "terça 10h" etc.).
 
 ## 3. Conferir a rede externa
 
-O compose entra na `icontainer-network` (a mesma do AletheIA e do OpenResty).
-Se ela já existe por causa do AletheIA, pule. Para conferir:
+O compose entra na `icontainer-network` para o LembraZap conseguir chamar a
+**Evolution API pelo nome do container** (`http://evolution-api:8080`). O proxy
+público é o nginx/OpenResty do **host** (não participa dessa rede) — ele chega no
+LembraZap pela porta publicada `127.0.0.1:8050`. Se a rede já existe por causa do
+AletheIA, pule. Para conferir:
 
 ```bash
 docker network ls | grep icontainer
@@ -72,36 +75,89 @@ Teste local na VPS:
 curl -s http://127.0.0.1:8050/healthz     # {"ok":true,"simulacao":false}
 ```
 
-## 5. Publicar no OpenResty (HTTPS)
+## 5. Publicar no nginx do host (subdomínio próprio)
 
-A porta 8050 está presa em `127.0.0.1` de propósito: o público entra só pelo
-proxy. No arquivo de `server` do Aletheia no OpenResty, adicione:
+O LembraZap usa um **subdomínio isolado** (`lembrazap.aletheia.ia.br`) em vez de um
+path `/lembrazap/`. Motivo: um `server` block próprio **não toca** na configuração do
+`aletheia.ia.br` que já funciona — risco zero de quebrar o Aletheia ou o Financeiro,
+e sem a pegadinha da barra no `proxy_pass`.
+
+> Diferença importante pro AletheIA: o LembraZap é **um único container** que serve
+> painel + API + webhook, tudo na porta 8050. Então basta **um** `location /` — não
+> precisa de blocos separados para `/api` ou `/webhook`.
+
+### 5.1 DNS
+
+No painel de DNS do `aletheia.ia.br`, crie um registro:
+
+| Tipo | Nome | Valor |
+|---|---|---|
+| A | `lembrazap` | o mesmo IP público de `aletheia`/`api` (o IP da VPS) |
+
+Aguarde propagar (normalmente minutos). Teste: `getent hosts lembrazap.aletheia.ia.br`.
+
+### 5.2 Bloco HTTP (antes do certificado)
+
+Adicione ao config do nginx (o mesmo arquivo `default` da VPS, ou um
+`sites-available/lembrazap` novo com symlink em `sites-enabled`):
 
 ```nginx
-# /lembrazap (sem barra) -> /lembrazap/ para o location abaixo casar
-location = /lembrazap { return 301 /lembrazap/; }
+# --- LEMBRAZAP (painel + API + webhook no mesmo container, porta 8050) ---
+server {
+    listen 80;
+    listen [::]:80;
+    server_name lembrazap.aletheia.ia.br;
 
-location /lembrazap/ {
-    proxy_pass http://lembrazap:8050/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    location / {
+        proxy_pass http://127.0.0.1:8050;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+    }
 }
 ```
 
-Recarregue e teste de fora:
+> `proxy_pass http://127.0.0.1:8050` **sem barra no fim** — aqui não há prefixo para
+> remover (o subdomínio já é a raiz). É o oposto do caso `/financeiro`.
 
 ```bash
-nginx -t && nginx -s reload        # ou o equivalente no container do OpenResty
-curl -s https://aletheia.ia.br/lembrazap/healthz
+nginx -t && systemctl reload nginx
+curl -s http://lembrazap.aletheia.ia.br/healthz   # {"ok":true,"simulacao":false}
 ```
 
-O painel fica em `https://aletheia.ia.br/lembrazap/`.
+### 5.3 HTTPS com certbot (automático)
 
-> O `proxy_pass` termina com `/` — é isso que remove o prefixo `/lembrazap`
-> antes de chegar no app. Sem a barra, o app receberia o prefixo e o painel
-> quebraria.
+O certificado atual (`live/aletheia.ia.br/`) **não cobre** o subdomínio. Deixe o
+certbot emitir e configurar sozinho:
+
+```bash
+certbot --nginx -d lembrazap.aletheia.ia.br
+```
+
+O certbot cria o certificado, adiciona o `listen 443 ssl` + as linhas
+`ssl_certificate` e o redirect HTTP→HTTPS automaticamente (igual fez pro AletheIA).
+Quando perguntar, escolha **redirecionar** HTTP para HTTPS.
+
+Teste final de fora:
+
+```bash
+curl -s https://lembrazap.aletheia.ia.br/healthz
+```
+
+O painel fica em **`https://lembrazap.aletheia.ia.br/`**.
+
+### 5.4 Alternativa: path `/lembrazap/` (não recomendada)
+
+Dá para publicar em `aletheia.ia.br/lembrazap/` dentro do `server` 443 existente, mas
+aí você **edita o bloco que já funciona** e precisa da barra no `proxy_pass`
+(`proxy_pass http://127.0.0.1:8050/;` **com** barra, para remover o prefixo) — foi
+esse tipo de detalhe que tornou o `/financeiro` penoso. O painel já é "ciente do
+prefixo", então funcionaria; ainda assim, o subdomínio é mais seguro e limpo.
 
 ## 6. Teste de ponta a ponta com WhatsApp real
 
@@ -154,7 +210,7 @@ git próprio** (`git init` + commit a cada entrega) — é o seu botão de desfa
 | QR não aparece no painel | `EVOLUTION_API_URL` errado; teste `curl -H "apikey: CHAVE" $EVOLUTION_API_URL/instance/fetchInstances` de dentro da rede |
 | QR aparece mas não conecta | número já pareado em outro aparelho/instância; desconecte no WhatsApp e gere novo QR |
 | Mensagens não saem | instância desconectada (aba Conexão mostra estado); reconecte |
-| Respostas do cliente não chegam (SIM/SAIR ignorados) | webhook não configurado: confira `WEBHOOK_PUBLIC_URL` e teste `curl -X POST https://aletheia.ia.br/lembrazap/webhook/evolution/ID -d '{}' -H 'Content-Type: application/json'` (deve responder `{"ok":true,"acao":"ignorado"}`); se o OpenResty tiver WAF, libere POST nesse path |
+| Respostas do cliente não chegam (SIM/SAIR ignorados) | webhook não configurado: confira `WEBHOOK_PUBLIC_URL` e teste `curl -X POST https://lembrazap.aletheia.ia.br/webhook/evolution/ID -d '{}' -H 'Content-Type: application/json'` (deve responder `{"ok":true,"acao":"ignorado"}`); se houver WAF no nginx, libere POST nesse path |
 | Webhook chega mas não casa o cliente | o número que respondeu não está na base, ou o sufixo de 10 dígitos difere (DDI/DDD) |
 | Painel abre mas API dá 401 | token errado/no navegador antigo: limpe o localStorage e entre de novo |
 | `healthy` nunca fica | `docker compose logs` — normalmente `.env` ausente ou porta 8050 ocupada (`ss -tlnp \| grep 8050`) |
@@ -162,7 +218,8 @@ git próprio** (`git init` + commit a cada entrega) — é o seu botão de desfa
 ## 9. Checklist de segurança antes de vender
 
 - [ ] Porta 8050 só em `127.0.0.1` (confira: `ss -tlnp | grep 8050`)
-- [ ] HTTPS obrigatório no OpenResty (redirect 80→443 já existe pelo Aletheia)
+- [ ] DNS: registro A `lembrazap` → IP da VPS (`getent hosts lembrazap.aletheia.ia.br`)
+- [ ] HTTPS: `certbot --nginx -d lembrazap.aletheia.ia.br` rodado e redirect 80→443 ativo
 - [ ] `.env` com permissão `600` (`chmod 600 .env`)
 - [ ] Backup cronado e **um restore testado** pelo menos uma vez
 - [ ] Token de cada conta entregue por canal privado (é a senha do negócio)
