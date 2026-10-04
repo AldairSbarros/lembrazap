@@ -42,6 +42,11 @@ services:
     # SEM bind mount de propósito. Montar ./backend:/app sobrescreve a imagem
     # com o código da host — em produção isso anula o build e faz o container
     # usar os arquivos da checkout local, não os da imagem.
+    # `host-gateway` expõe a host como `host.docker.internal` dentro do container.
+    # Necessário porque a Evolution API roda em OUTRO container: de dentro do
+    # backend, 127.0.0.1 é o próprio backend, não a host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
@@ -66,6 +71,10 @@ services:
     # espera o backend ficar healthy para não subir contra o schema antigo.
     entrypoint: []
     command: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "--loglevel=info"]
+    # O worker também chama a Evolution API ao disparar os lembretes, então
+    # precisa da mesma resolução da host que o backend.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
