@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus, User, Phone, Scissors } from 'lucide-react';
+import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus } from 'lucide-react';
 
 const TEMPLATES_POR_NICHO = {
   barbearia: {
@@ -47,7 +47,7 @@ export default function App() {
 
   const carregarAgendamentos = async (token) => {
     try {
-      const res = await fetch('http://localhost:8000/api/agendamentos', {
+      const res = await fetch('/api/agendamentos', {
         headers: { 'X-LZ-Token': token || tokenAuth }
       });
       if (res.ok) {
@@ -76,7 +76,7 @@ export default function App() {
     setEtapa('carregando');
 
     try {
-      const resConta = await fetch('http://localhost:8000/api/contas', {
+      const resConta = await fetch('/api/contas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nome, negocio: nome })
@@ -87,14 +87,14 @@ export default function App() {
       const token = dadosConta.token;
       setTokenAuth(token);
 
-      const resInstancia = await fetch('http://localhost:8000/api/conexao/criar', {
+      const resInstancia = await fetch('/api/conexao/criar', {
         method: 'POST',
         headers: { 'X-LZ-Token': token }
       });
       const dadosInstancia = await resInstancia.json();
       if (!dadosInstancia.ok) throw new Error("Falha ao criar instância");
 
-      const resQr = await fetch('http://localhost:8000/api/conexao/qrcode', {
+      const resQr = await fetch('/api/conexao/qrcode', {
         method: 'GET',
         headers: { 'X-LZ-Token': token }
       });
@@ -118,7 +118,7 @@ export default function App() {
     setSalvoFeedback(false);
 
     try {
-      await fetch('http://localhost:8000/api/configuracoes', {
+      await fetch('/api/configuracoes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +131,7 @@ export default function App() {
       });
       setSalvoFeedback(true);
       setTimeout(() => setSalvoFeedback(false), 3000);
-    } catch (err) {
+    } catch {
       setErro("Erro ao comunicar com o servidor para guardar configurações.");
     }
   };
@@ -148,7 +148,7 @@ export default function App() {
         return;
       }
 
-      const res = await fetch('http://localhost:8000/api/agendamentos', {
+      const res = await fetch('/api/agendamentos', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
