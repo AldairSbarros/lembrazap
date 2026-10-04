@@ -1,0 +1,80 @@
+# Kilo Code — arquivos que o agente não deve ler.
+# Sintaxe padrão de .gitignore. Só afeta o acesso a arquivos do Kilo, não o Git.
+# Arquivos bloqueados aqui ainda podem ser rastreados por checkpoints.
+
+# ── Dependências (maior ganho:hausen de contexto em buscas) ───────────────────
+node_modules/
+bower_components/
+.jest/
+vendor/
+
+# ── Ambiente virtual Python ───────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+__pypackages__/
+
+# ── Bytecode Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# ── Builds e artefatos ────────────────────────────────────────────────────────
+dist/
+build/
+out/
+.next/
+.nuxt/
+coverage/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# ── Lockfiles (gerados; grandes e sem valor para edição manual) ───────────────
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+poetry.lock
+uv.lock
+Pipfile.lock
+
+# ── Segredos ──────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs e temporários ────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+logs/
+tmp/
+temp/
+.cache/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# ── Sistema operacional e editores ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Boilerplate do template do Vite (não referenciado em src/) ─────────────────
+frontend/src/assets/
+frontend/public/icons.svg
+
+# ── Dados locais / volumes ────────────────────────────────────────────────────
+dados/
+dados_teste/
+postgres_data/
+redis_data/
+*.sqlite
+*.sqlite3
+*.db

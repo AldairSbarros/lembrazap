@@ -1,0 +1,32 @@
+# Contexto de build do backend.
+# Sem isso o `COPY . .` do Dockerfile embute o venv local (14 MB) e o estado
+# do Celery beat na imagem.
+
+venv/
+.venv/
+env/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Estado do Celery beat gerado em runtime
+celerybeat-schedule
+celerybeat-schedule.*
+*.pid
+
+# Artefatos de teste local
+_setup_*.py
+_provar_*.py
+qr-*.png
+.*credenciais*
+
+# Secrets
+.env
+.env.*
+*.secret
+
+*.log
+.DS_Store
+Dockerfile
+.dockerignore

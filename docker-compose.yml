@@ -1,31 +1,73 @@
-# Sobe o LembraZap ao lado do AletheIA, na mesma rede externa do OpenResty.
-# A porta fica presa em 127.0.0.1: o acesso público deve passar pelo proxy reverso
-# (location /lembrazap/), nunca direto — igual ao backend do AletheIA.
 services:
-  lembrazap:
-    build: .
-    container_name: lembrazap
-    restart: unless-stopped
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: lembrazap_user
+      POSTGRES_PASSWORD: password_segura
+      POSTGRES_DB: lembrazap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:8050:8050"
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lembrazap_user -d lembrazap"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    # O entrypoint do Dockerfile roda `alembic upgrade head` antes do uvicorn.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
     env_file:
       - .env
-    volumes:
-      - ./dados:/app/dados
-    networks:
-      - icontainer-network
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://lembrazap_user:password_segura@db:5432/lembrazap
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/healthz', timeout=5)"]
-      interval: 30s
-      timeout: 6s
-      retries: 3
-      start_period: 15s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
-networks:
-  icontainer-network:
-    external: true
+  worker:
+    build: ./backend
+    # Sem o entrypoint: as migrations são aplicadas só pelo backend, e o worker
+    # espera o backend ficar healthy para não subir contra o schema antigo.
+    entrypoint: []
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "--loglevel=info"]
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://lembrazap_user:password_segura@db:5432/lembrazap
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

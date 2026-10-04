@@ -1,92 +1,151 @@
-# LembraZap — protótipo
+# LembraZap
 
-Micro-SaaS de remarketing por WhatsApp para negócios locais (salões, clínicas,
-oficinas, estúdios). Cada conta conecta o **próprio número** de WhatsApp via QR
-Code e usa duas automações:
+Micro-SaaS de **lembretes e remarketing por WhatsApp** para negócios locais —
+barbearias, salões, clínicas, oficinas, estúdios.
 
-1. **Reativação** — clientes sem visitar há N dias recebem mensagem personalizada (`{nome}`, `{negocio}`, `{dias}`).
-2. **Lembrete de agenda** — compromissos cadastrados geram lembrete automático com a antecedência configurada.
-3. **Resposta automática ao SIM** — quem responde SIM / quero / confirmo à campanha (em até 7 dias)
-   recebe na hora o template de reserva, com prioridade máxima na fila, e ganha o selo
-   "respondeu SIM" no painel — a lista de leads quentes do dono do negócio.
-4. **Agendamento por IA** — se o cliente quente propuser dia e horário ("posso terça às 14h?"),
-   o sistema extrai a data, reserva na agenda e confirma sozinho. Groq como primário e
-   Gemini como fallback; sem chaves configuradas, usa um parser local (amanhã/hoje/dia da semana + hora).
+Cada conta conecta o **próprio número** de WhatsApp via QR Code, numa instância
+isolada da Evolution API. O sistema avisa o cliente antes do horário e registra a
+resposta (`SIM` confirma, `ADIAR` entra em remarcação).
 
-Roda sobre a **mesma Evolution API** que o AletheIA já usa na VPS (instância
-isolada por conta, padrão copiado da integração de produção). Sem banco: JSON em
-disco com escrita atômica.
+---
 
-## Proteções embutidas (não remova)
+## Documentação
 
-- **Limite diário** de envios por conta (padrão 80) e **intervalo mínimo** entre
-  mensagens (padrão 20 s) — WhatsApp bloqueia número que spamma.
-- **Opt-out** automático: quem responde SAIR / PARAR / CANCELAR sai da base via
-  webhook e tem os envios pendentes derrubados. Também há opt-out manual no painel.
-- Toda mensagem padrão **inclui a instrução de opt-out** (exigência da política do
-  WhatsApp e boa prática de LGPD).
-- Token de conta: só o hash SHA-256 é persistido; o token é mostrado uma única vez.
+| Documento | Para quê |
+|---|---|
+| [docs/MANUAL-USUARIO.md](docs/MANUAL-USUARIO.md) | **Comece aqui se você é o dono do negócio.** Passo a passo sem código. |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalar, rodar local e publicar na VPS. |
+| [docs/API.md](docs/API.md) | Referência de todas as rotas, com exemplos de `curl`. |
+| [docs/ERROS.md](docs/ERROS.md) | Diagnóstico: sintomas, causas e soluções. |
+| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Como o sistema é montado por dentro. |
+
+**Swagger interativo:** com o backend no ar, em
+<http://localhost:8000/docs> (UI) e <http://localhost:8000/redoc> (leitura).
+
+---
+
+## Subir o sistema
+
+Pré-requisitos: **Docker Desktop** e **Node.js 20+**.
+
+```bash
+cp .env.example .env      # ajuste EVOLUTION_API_URL e EVOLUTION_API_KEY
+docker compose up -d --build
+```
+
+Isso sobe quatro serviços:
+
+| Serviço | Porta | Função |
+|---|---|---|
+| `backend` | 8000 | API FastAPI + Swagger |
+| `worker` | — | Celery: envia mensagens e agenda lembretes (beat a cada 10 min) |
+| `db` | 5432 | PostgreSQL 15 |
+| `redis` | 6379 | Fila do Celery |
+
+O frontend é separado (Vite, porta 5173):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Conferir se está tudo de pé:
+
+```bash
+docker compose ps                        # todos devem estar healthy/up
+curl http://localhost:8000/healthz       # {"status":"ok", ...}
+```
+
+---
+
+## Como funciona, em 6 passos
+
+```
+1. POST /api/contas          cria a conta e devolve o token (uma única vez)
+2. POST /api/conexao/criar   cria a instância na Evolution + registra o webhook
+3. GET  /api/conexao/qrcode  você escaneia e pareia o seu WhatsApp
+4. POST /api/configuracoes   antecedência do lembrete e texto da mensagem
+5. POST /api/agendamentos    marca um horário
+6. o worker manda            na janela de antecedência, e a resposta volta via webhook
+```
+
+**Detalhe que costuma travar:** o passo 6 depende do webhook, que precisa de URL
+pública. Ver [docs/ERROS.md](docs/ERROS.md#o-webhook-não-chega).
+
+---
+
+## Variáveis de ambiente
+
+| Variável | Obrigatória | Efeito |
+|---|---|---|
+| `EVOLUTION_API_URL` | sim | Endereço da Evolution API (ex.: `http://216.22.5.199:8080`) |
+| `EVOLUTION_API_KEY` | sim | Chave `apikey` da Evolution |
+| `MODO_SIMULACAO` | não | `1` = nenhum HTTP externo (QR fictício, nada é enviado). Padrão: ligado se a URL estiver vazia |
+| `WEBHOOK_PUBLIC_URL` | produção | Base pública do backend, usada para registrar o webhook. Sem ela o cliente responde mas o sistema não vê |
+| `TIMEZONE` | não | Fuso do Celery. Padrão `America/Manaus` |
+| `DATABASE_URL` | não | Injetada pelo compose. Só defina à mão fora do Docker |
+| `REDIS_URL` | não | Injetada pelo compose |
+
+Copie `.env.example` e preencha. **Nunca comite o `.env`** — ele tem a chave da
+Evolution. O `.gitignore` já protege.
+
+---
 
 ## Estrutura
 
 ```
 lembrazap/
-  app.py            API + loops de fundo (fila de envio e agenda)
-  evolution.py      cliente Evolution API v2 com MODO_SIMULACAO
-  armazem.py        JsonStore (escrita atômica + lock)
-  static/index.html painel sem build (Conexão, Clientes, Reativação, Agenda, Enviados, Config)
-  dados/            JSON em disco (criado automaticamente)
+├── docker-compose.yml        4 serviços + healthchecks
+├── .env.example              modelo de configuração
+├── deploy/
+│   └── nginx-lembrazap.conf  server block para publicar na VPS
+├── backend/
+│   ├── Dockerfile
+│   ├── entrypoint.sh         roda `alembic upgrade head` e sobe o uvicorn
+│   ├── alembic/              migrations do banco
+│   └── app/
+│       ├── main.py           rotas da API
+│       ├── schemas.py        modelos de entrada e templates por nicho
+│       ├── api/deps.py       autenticação por X-LZ-Token
+│       ├── db/               engine, sessão e modelos (4 tabelas)
+│       ├── services/         cliente da Evolution API
+│       └── worker/           Celery: app, tasks e beat
+└── frontend/                 painel em React + Vite (porta 5173)
 ```
 
-## Rodar local (sem WhatsApp real)
+---
 
-```bash
-pip install -r requirements.txt
-MODO_SIMULACAO=1 python app.py        # http://localhost:8050
-```
+## Regras do produto
 
-Em simulação o QR é fictício e os "envios" só aparecem no log e na aba Enviados
-com o selo `(sim)` — dá para demonstrar o produto inteiro sem tocar em número real.
+- **Lembrete de agenda** — dispara `horas_antecedencia` antes do horário.
+- **Resposta automática** — `SIM` confirma; `ADIAR`/`REAGENDAR` marca para remarcar.
+- **Token de conta** — só o hash SHA-256 é guardado no banco; o token em si aparece
+  uma única vez e não é recuperável.
 
-## Deploy na VPS (ao lado do AletheIA)
+---
 
-O passo a passo completo — upload, `.env`, build, bloco do OpenResty, teste com
-WhatsApp real, backup cronado, atualização, rollback e troubleshooting — está em
-**[DEPLOY_VPS.md](DEPLOY_VPS.md)**. Resumo:
+## Limitações conhecidas
 
-1. Copie esta pasta para a VPS (ex.: `/root/lembrazap`).
-2. `cp .env.example .env` e preencha `EVOLUTION_API_URL` / `EVOLUTION_API_KEY`
-   com **os mesmos valores** do `docker-compose.yml` do AletheIA.
-3. `WEBHOOK_PUBLIC_URL=https://aletheia.ia.br/lembrazap` (para opt-out e respostas).
-4. `docker compose up -d --build` e confira `docker compose ps` (healthy).
-5. Publique no OpenResty com `location /lembrazap/ { proxy_pass http://lembrazap:8050/; ... }`.
-6. Abra `https://aletheia.ia.br/lembrazap/`, crie a conta piloto e conecte o WhatsApp pelo QR.
+Estão documentadas em detalhe em [docs/ERROS.md](docs/ERROS.md#limitações-conhecidas).
+As mais relevantes:
 
-## Fluxo do piloto pagante
+- **Não há limite diário de envios nem intervalo entre mensagens.** O worker dispara
+  em rajada. Mandar campanha grande para número real **pode banir o número**.
+  Implemente o P1 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md#pendências) antes.
+- **Não há opt-out.** Não existe palavra-chave de descadastro, e os templates não
+  trazem a instrução de resposta. Isso é exposição de LGPD e contra a política do WhatsApp.
+- **Não há tarefa que reprocesse a fila.** Se um envio falhar, o item fica
+  `pendente` para sempre.
+- **`reagendando` é beco sem saída.** Depois de `ADIAR`, um `SIM` posterior não
+  confirma, porque o webhook só busca agendamentos com status `agendado`.
+- **Fuso horário.** O banco guarda UTC e o texto renderiza `{data}`/`{horario}`
+  direto do valor UTC — a hora mostrada ao cliente pode estar errada.
+- **O painel mostra "Conectado" fixo.** Não consulta o estado real da instância.
+- **Sair do painel sem querer cria outra conta** e outra instância na Evolution.
 
-1. Conta criada no painel → token entregue ao cliente (ou você cria para ele).
-2. Conexão → QR Code com o número do negócio.
-3. Clientes → importar CSV da agenda atual dele.
-4. Reativação → prévia com corte de 60/90 dias → disparar.
-5. Agenda → cadastros novos; o lembrete sai sozinho.
-6. Enviados → acompanhamento com status por mensagem.
+---
 
-## O que ficou de fora de propósito (v1)
+## Licença
 
-- **Cobrança Stripe** — entre depois que 3-5 pilotos pagarem no pix/manual; o
-  AletheIA já tem o padrão de checkout para copiar.
-- Negociação conversacional completa com IA ("posso mais cedo?" → contraproposta
-  de horários) — hoje a IA **extrai o horário proposto e reserva**; contrapropostas
-  e remarcações ficam com o dono do negócio na conversa.
-- Multi-usuário por conta, papéis, auditoria.
-- Migração para banco — o JSON aguenta centenas de contas; migre quando doer.
-
-## Variáveis de ambiente
-
-| Variável | Efeito |
-|---|---|
-| `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` | apontam para a Evolution API da VPS |
-| `MODO_SIMULACAO` | `1` desliga qualquer chamada externa (demo/dev) |
-| `WEBHOOK_PUBLIC_URL` | base pública para o webhook de opt-out |
-| `DADOS_DIR` | onde os JSON ficam (volume no container) |
-| `PORTA` | porta HTTP (padrão 8050) |
+Projeto privado. Todos os direitos reservados.

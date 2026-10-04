@@ -1,26 +1,100 @@
-# Segredos e configuração local — NUNCA commitar
-.env
-*.env
-!.env.example
+# Dependencies / Node
+/node_modules
+/.pnp
+.pnp.js
 
-# Banco de dados (os JSON são o banco inteiro) e backups
-dados/
-dados_teste/
-*.tar.gz
+# Testing
+/coverage
+
+# Production Build
+/dist
+/build
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
 *.egg-info/
-.venv/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments / Python IDEs
+.venv
+env/
 venv/
-
-# Logs e artefatos de teste
-*.log
-server_teste.log
-
-# SO / editor
-.DS_Store
-Thumbs.db
+ENV/
+env.bak
+venv.bak
+.env
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# Docker / Volumes locais
+.docker/
+docker-data/
+postgres_data/
+redis_data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Secrets e configuração local
+.env
+.env.*
+!.env.example
+*.secret
+*credenciais*
+
+# Artefatos de teste local (contêm token de conta e QR de pareamento)
+backend/_*.py
+backend/qr-*.png
+backend/.barbearia-credenciais
+
+# Estado do Celery beat, gerado em runtime pelo worker
+celerybeat-schedule
+celerybeat-schedule.*
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS Generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
