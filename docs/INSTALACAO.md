@@ -106,7 +106,11 @@ cp deploy/nginx-lembrazap-http.conf $CONF
 docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe openresty -s reload
 
 # 2. Certificado do subdomínio (não há wildcard para *.aletheia.ia.br)
-certbot certonly --webroot -w $SITE/index -d lembrazap.aletheia.ia.br
+#    O webroot tem que ser o diretório HOST que corresponde ao
+#    `root /usr/share/nginx/html` do vhost de bootstrap, senão a emissão falha.
+ACME_ROOT=/etc/icontainer/apps/openresty/openresty/root
+mkdir -p $ACME_ROOT/.well-known/acme-challenge
+certbot certonly --webroot -w $ACME_ROOT -d lembrazap.aletheia.ia.br
 cp /etc/letsencrypt/live/lembrazap.aletheia.ia.br/{fullchain,privkey}.pem $SITE/ssl/
 
 # 3. Vhost final com HTTPS
@@ -114,9 +118,22 @@ cp deploy/nginx-lembrazap.conf $CONF
 docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe openresty -s reload
 
 # 4. Painel: build do frontend para o mesmo vhost (mesma origem, sem CORS)
-cd frontend && npm ci && npm run build
-cp -r dist/* $SITE/index/
+#    Feito em container porque o Vite 8 exige Node >=20 e a VPS tem Node 18.
+docker build -f frontend/Dockerfile --output type=local,dest=frontend/dist frontend/
+cp -r frontend/dist/* $SITE/index/
 ```
+
+> **Renovação do certificado.** O OpenResty não lê `/etc/letsencrypt/live/`, então
+> o cert em `$SITE/ssl` ficaria velho depois da renovação automática. Registre um
+> hook que copie os arquivos e recarregue o OpenResty:
+>
+> ```bash
+> mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+> # /etc/letsencrypt/renewal-hooks/deploy/lembrazap-openresty.sh
+> #   cp /etc/letsencrypt/live/lembrazap.aletheia.ia.br/{fullchain,privkey}.pem $SITE/ssl/
+> #   docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe openresty -s reload
+> certbot renew --dry-run   # valida o hook
+> ```
 
 > **Porta 8002, não 8000.** O host 8000 já é do `aletheia_backend` nessa VPS.
 > O container do backend escuta em 8000; quem fala com ele de fora usa 8002.
