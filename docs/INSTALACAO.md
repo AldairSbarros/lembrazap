@@ -45,6 +45,12 @@ O `entrypoint.sh` roda `alembic upgrade head` antes do uvicorn, então o schema 
 banco é criado/ajustado automaticamente. O `worker` só sobe depois que o `backend`
 fica `healthy`, para não rodar contra um banco sem tabela.
 
+Para desenvolvimento, com bind mount e recarga automática:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
 Conferir:
 
 ```bash

@@ -1,0 +1,21 @@
+# Sobreposição para DESENVOLVIMENTO.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Monta o código da host dentro do container e liga o --reload. Só use em
+# desenvolvimento: em produção a base (docker-compose.yml) roda o código da
+# imagem, sem bind mount, para que o build valha alguma coisa.
+#
+# Atenção: com o bind mount, o `chmod +x` do Dockerfile é anulado, porque
+# /app passa a ser o diretório da host. O ENTRYPOINT usa `sh /app/entrypoint.sh`
+# justamente para não depender desse bit.
+
+services:
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app
+
+  worker:
+    volumes:
+      - ./backend:/app

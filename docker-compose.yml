@@ -30,15 +30,18 @@ services:
   backend:
     build: ./backend
     # O entrypoint do Dockerfile roda `alembic upgrade head` antes do uvicorn.
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Sem --reload: em produção o código vem da imagem. Para recarregar no
+    # desenvolvimento, use docker-compose.dev.yml.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     # Host 8002 -> container 8000. O 8000 da host já é usado pelo aletheia_backend
     # na VPS de produção, então o mapeamento precisa ser explícito e diferente.
     # O container continua escutando em 8000; quem fala com ele usa o nome do
     # serviço (backend:8000), não a porta da host.
     ports:
       - "8002:8000"
-    volumes:
-      - ./backend:/app
+    # SEM bind mount de propósito. Montar ./backend:/app sobrescreve a imagem
+    # com o código da host — em produção isso anula o build e faz o container
+    # usar os arquivos da checkout local, não os da imagem.
     env_file:
       - .env
     environment:
@@ -49,6 +52,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 5s
@@ -62,8 +66,6 @@ services:
     # espera o backend ficar healthy para não subir contra o schema antigo.
     entrypoint: []
     command: ["celery", "-A", "app.worker.celery_app", "worker", "-B", "--loglevel=info"]
-    volumes:
-      - ./backend:/app
     env_file:
       - .env
     environment:
@@ -72,6 +74,7 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:
