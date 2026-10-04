@@ -85,16 +85,39 @@ O backend registra na Evolution a URL
 WEBHOOK_PUBLIC_URL=https://lembrazap.aletheia.ia.br
 ```
 
-Exige o bloco em `deploy/nginx-lembrazap.conf` publicado na VPS:
+Na VPS de produção, o nginx é o **OpenResty do painel iContainer**, em container
+com rede host. Não é um nginx de instalação comum, então os caminhos são
+específicos. O procedimento completo está no próprio
+[`deploy/nginx-lembrazap.conf`](../deploy/nginx-lembrazap.conf), e o resumo:
 
 ```bash
-sudo cp deploy/nginx-lembrazap.conf /etc/nginx/conf.d/lembrazap.conf
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d lembrazap.aletheia.ia.br
+SITE=/etc/icontainer/apps/openresty/openresty/www/sites/lembrazap.aletheia.ia.br
+CONF=/etc/icontainer/apps/openresty/openresty/conf/conf.d/lembrazap.aletheia.ia.br.conf
+mkdir -p $SITE/{log,ssl,index}
+
+# 1. Bootstrap HTTP (necessário: o bloco HTTPS não sobe sem certificado)
+cp deploy/nginx-lembrazap-http.conf $CONF
+docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe openresty -s reload
+
+# 2. Certificado do subdomínio (não há wildcard para *.aletheia.ia.br)
+certbot certonly --webroot -w $SITE/index -d lembrazap.aletheia.ia.br
+cp /etc/letsencrypt/live/lembrazap.aletheia.ia.br/{fullchain,privkey}.pem $SITE/ssl/
+
+# 3. Vhost final com HTTPS
+cp deploy/nginx-lembrazap.conf $CONF
+docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe openresty -s reload
+
+# 4. Painel: build do frontend para o mesmo vhost (mesma origem, sem CORS)
+cd frontend && npm ci && npm run build
+cp -r dist/* $SITE/index/
 ```
 
-> O arquivo aponta para `127.0.0.1:8000`. A versão antiga apontava para `8050`,
-> que era o protótipo de arquivo único e não existe mais.
+> **Porta 8002, não 8000.** O host 8000 já é do `aletheia_backend` nessa VPS.
+> O container do backend escuta em 8000; quem fala com ele de fora usa 8002.
+>
+> **`db` e `redis` não publicam portas** de propósito — só o backend fala com
+> eles pela rede interna do compose. Isso evita conflito com o Postgres e o
+> Redis compartilhados do painel (5432 e 6379) e fecha o acesso externo.
 
 ### Opção B — Teste temporário: túnel cloudflared
 

@@ -8,8 +8,9 @@ services:
       POSTGRES_DB: lembrazap
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Sem `ports:` de propósito. Só o backend fala com o banco, pela rede
+    # interna do compose. Publicar 5432 na host ocupa porta e expõe o banco.
+    # Para depurar: docker compose exec db psql -U lembrazap_user -d lembrazap
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lembrazap_user -d lembrazap"]
       interval: 5s
@@ -19,8 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
-    ports:
-      - "6379:6379"
+    # Sem `ports:` pela mesma razão do Postgres.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,8 +31,12 @@ services:
     build: ./backend
     # O entrypoint do Dockerfile roda `alembic upgrade head` antes do uvicorn.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Host 8002 -> container 8000. O 8000 da host já é usado pelo aletheia_backend
+    # na VPS de produção, então o mapeamento precisa ser explícito e diferente.
+    # O container continua escutando em 8000; quem fala com ele usa o nome do
+    # serviço (backend:8000), não a porta da host.
     ports:
-      - "8000:8000"
+      - "8002:8000"
     volumes:
       - ./backend:/app
     env_file:
