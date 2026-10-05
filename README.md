@@ -91,9 +91,18 @@ pública. Ver [docs/ERROS.md](docs/ERROS.md#o-webhook-não-chega).
 | `TIMEZONE` | não | Fuso do Celery. Padrão `America/Manaus` |
 | `DATABASE_URL` | não | Injetada pelo compose. Só defina à mão fora do Docker |
 | `REDIS_URL` | não | Injetada pelo compose |
+| `STRIPE_SECRET_KEY` | não | Chave da Stripe. Sem ela a cobrança é **manual** |
+| `STRIPE_WEBHOOK_SECRET` | cobrança automática | Prova que o webhook veio do Stripe |
+| `STRIPE_PRICE_ID_*` | cobrança automática | Ids dos preços recorrentes de cada plano |
+| `STRIPE_PRECIO_*` | não | Preço em centavos. Vazio = usa `app/config/planos.py` |
+| `FRONTEND_URL` | cobrança automática | URL dos botões de assinar e gerenciar assinatura |
 
 Copie `.env.example` e preencha. **Nunca comite o `.env`** — ele tem a chave da
-Evolution. O `.gitignore` já protege.
+Evolution e a da Stripe. O `.gitignore` já protege, e o push protection do GitHub
+recusa qualquer chave que escape para um arquivo versionado.
+
+Para operar o SaaS (contas, cobrança, suspensão), veja
+[docs/PAINEL-ADMIN.md](docs/PAINEL-ADMIN.md).
 
 ---
 
@@ -108,15 +117,25 @@ lembrazap/
 ├── backend/
 │   ├── Dockerfile
 │   ├── entrypoint.sh         roda `alembic upgrade head` e sobe o uvicorn
+│   ├── criar_admin.py        cria a conta do proprietário (roda uma vez)
 │   ├── alembic/              migrations do banco
 │   └── app/
-│       ├── main.py           rotas da API
+│       ├── main.py           monta a API e a descrição do OpenAPI
 │       ├── schemas.py        modelos de entrada e templates por nicho
-│       ├── api/deps.py       autenticação por X-LZ-Token
-│       ├── db/               engine, sessão e modelos (4 tabelas)
-│       ├── services/         cliente da Evolution API
+│       ├── api/
+│       │   ├── deps.py       X-LZ-Token, X-LZ-Admin e o bloqueio por assinatura
+│       │   ├── clientes.py   base de clientes e importação de CSV
+│       │   ├── assinatura.py planos, limites e checkout
+│       │   └── admin.py      contas, cobrança e métricas do proprietário
+│       ├── config/planos.py  catálogo de planos (dados, não código)
+│       ├── db/               engine, sessão e modelos (6 tabelas)
+│       ├── services/         Evolution, telefone, mensagem, assinatura, Stripe, senha
 │       └── worker/           Celery: app, tasks e beat
-└── frontend/                 painel em React + Vite (porta 5173)
+└── frontend/
+    └── src/
+        ├── App.jsx           painel do assinante
+        ├── Clientes.jsx      base de clientes e importação de CSV
+        └── Admin.jsx         painel do proprietário (rota /admin)
 ```
 
 ---

@@ -40,6 +40,74 @@ status do agendamento.
 O segundo fluxo **depende inteiramente** do webhook. Sem URL pública, o cliente
 responde e o sistema não fica sabendo.
 
+### As duas campanhas
+
+Rodam no mesmo worker, diferenciadas pelo valor de `campanha` em `fila`:
+
+| Campanha | Quando dispara | Quem entra | Janela |
+|---|---|---|---|
+| `lembrete_agendamento` | beat a cada 10 min | `agenda` com status `agendado` dentro de `horas_antecedencia` | 30 min de tolerância |
+| `reativacao_inativos` | beat, uma vez à meia-noite | `clientes` com `ultima_visita` anterior ao corte e **sem** `opt_out` | teto de `limite_por_dia` |
+
+O corte da reativação é `dias_sem_visitar`, configurável por conta (7 a 365).
+Cliente sem `ultima_visita` **não entra**: não há como saber há quanto tempo não vem,
+e afirmar "faz 90 dias" para quem acabou de ser cadastrado queima a credibilidade do
+número.
+
+---
+
+## Cobrança e acesso
+
+O dono do sistema opera em `/admin`, com sessão separada. O admin **não é um
+tenant**: outra tabela, outro header, outra chave de `localStorage`.
+
+```
+┌──────────────┐  X-LZ-Admin   ┌──────────────┐
+│  /admin      │ ─────────────▶ │  /api/admin  │ ──▶ tenants (status, plano)
+│  React       │               │  contas,     │ ──▶ pagamentos (histórico)
+└──────────────┘               │  cobrança    │ ──▶ clientes (leitura, máscara)
+                               └──────┬───────┘
+                                      ▲
+                          POST /api/admin/stripe/webhook
+                                      │
+                               ┌──────┴───────┐
+                               │    Stripe     │
+                               └──────────────┘
+
+┌──────────────┐  X-LZ-Token   ┌──────────────┐
+│  painel do   │ ─────────────▶ │  /api/*      │
+│  assinante   │   402 se      │  clientes,   │
+└──────────────┘  bloqueado    │  agenda, cfg │
+```
+
+### Onde o bloqueio é verificado
+
+`pode_operar()` em `services/assinatura.py` é a função única de decisão, e é
+chamada em três camadas — **duas delas no worker**, porque a fila tem latência:
+
+| Camada | Arquivo | Efeito |
+|---|---|---|
+| API | `api/deps.py: exigir_acesso_ativo` | `402` em agendamento, teste de fila e importação |
+| Enfileirar | `worker/tasks.py` | lembrete e reativação pulam a conta |
+| Enviar | `worker/tasks.py: processar_item_fila` | barrado mesmo se enfileirado **antes** da suspensão |
+
+Suspender também **esvazia a fila pendente** da conta. Sem isso, um lembrete marcado
+antes da suspensão sairia depois dela.
+
+O webhook do WhatsApp **não** é bloqueado: com a conta suspensa, o `SAIR` de um
+cliente precisa continuar sendo registrado e concluir uma visita precisa zerar o
+contador de dias.
+
+### Idempotência do Stripe
+
+O Stripe reenvia um webhook até receber `200`, então a mesma cobrança pode chegar
+várias vezes. `pagamentos.stripe_event_id` tem **índice único**: reentregar o mesmo
+evento não conta a cobrança duas vezes no painel.
+
+A rota responde `200` mesmo sem conseguir identificar a conta. Devolver erro faz o
+Stripe reenviar por dias, e um evento órfão de conta apagada viraria ciclo
+infinito de reenvio.
+
 ---
 
 ## Componentes
@@ -49,16 +117,57 @@ responde e o sistema não fica sabendo.
 Rotas FastAPI, CORS e descrição do OpenAPI. Instância única do Celery importada
 de `worker/celery_app.py` — usado só para `send_task`.
 
+### `backend/app/api/`
+
+Três módulos de rotas, porque `main.py` sozinho já estava grande demais e o painel
+administrativo precisa ficar longe do fluxo do assinante:
+
+| Arquivo | Prefixo | Sessão |
+|---|---|---|
+| `clientes.py` | `/api/clientes` | `X-LZ-Token` |
+| `assinatura.py` | `/api/assinatura` | `X-LZ-Token` (`/planos` é pública) |
+| `admin.py` | `/api/admin` | `X-LZ-Admin` |
+
 ### `backend/app/api/deps.py`
 
-Autenticação. `X-LZ-Token` → SHA-256 → busca em `tenants.token_hash`. O token em
-si nunca é persistido.
+Duas autenticações, deliberadamente independentes:
+
+| Dependência | Header | Resolve |
+|---|---|---|
+| `obter_tenant_atual` | `X-LZ-Token` | `tenants.token_hash` = SHA-256 do token |
+| `obter_admin_atual` | `X-LZ-Admin` | `admin_usuarios.token_hash` = SHA-256 |
+
+`exigir_acesso_ativo` é a dependência que devolve `402` quando a assinatura não
+está em ordem. Fica separada de `obter_tenant_atual` porque conta bloqueada
+**precisa** continuar lendo a própria base: o bloqueio é de envio, não de acesso.
+
+### `backend/app/services/`
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `evolution.py` | Cliente da Evolution API |
+| `telefone.py` | Normalização para dígitos com DDI; recusa fixo |
+| `mensagem.py` | Renderização de template e validação de chaves |
+| `config_disparo.py` | Leitura das regras de `tenants.config` com defaults |
+| `assinatura.py` | `pode_operar()`, máquina de status e processamento do webhook |
+| `stripe.py` | Checkout, portal e validação de assinatura do webhook |
+| `seguranca.py` | PBKDF2 da senha de admin |
+
+`stripe.py` importa o pacote `stripe` **de forma tardia**, só quando há
+`STRIPE_SECRET_KEY`. É o que deixa a API subir sem o pacote instalado e o sistema
+funcionar em cobrança manual.
+
+### `backend/app/config/planos.py`
+
+Catálogo de planos como **dados**, não código: preço, limite de clientes e de
+mensagens por plano. `STRIPE_PRECIO_*` no ambiente sobrescreve o arquivo, então
+mudar preço não exige mexer no código.
 
 ### `backend/app/db/`
 
 `database.py` cria a engine no **import do módulo** — sem `DATABASE_URL` a API
 não sobe (é o motivo de não existir execução fora do Docker sem exportar a
-variável). `models.py` tem as quatro tabelas.
+variável). `models.py` tem as seis tabelas.
 
 ### `backend/app/services/evolution.py`
 
@@ -72,19 +181,23 @@ Cliente da Evolution API. Cinco operações: `criar_instancia`, `obter_qrcode`,
 `celery_app.py` é a **única** instância do Celery: broker, serializers, fuso e
 `beat_schedule`. `tasks.py` importa dela — não cria outra.
 
-Três tasks:
+Quatro tasks:
 
 | Task | Quando roda | O que faz |
 |---|---|---|
 | `verificar_e_disparar_lembretes` | Beat, a cada 600s | Varre a agenda de todos os tenants e cria itens de fila |
-| `processar_item_fila` | `.delay()` da anterior | Envia via Evolution e atualiza status |
+| `reativar_clientes_inativos` | Beat, à meia-noite | Monta a campanha de sumidos, respeitando `opt_out` e `limite_por_dia` |
+| `processar_item_fila` | `.delay()` das anteriores | Envia via Evolution e atualiza status |
 | `simular_envio_whatsapp` | `POST /api/teste-fila` | Só escreve no log |
+
+As duas primeiras pulam conta sem acesso, e `processar_item_fila` barra o envio de
+mensagem que já estava na fila antes da suspensão.
 
 ---
 
 ## Modelo de dados
 
-Quatro tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
+Seis tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
 
 ### `tenants` — uma linha por conta
 
@@ -126,12 +239,48 @@ Quatro tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
 | Coluna | Nota |
 |---|---|
 | `agenda_id`, `cliente_id` | Sem FK — sem integridade referencial |
-| `campanha` | Sempre `lembrete_remarcacao` |
+| `campanha` | `lembrete_agendamento` ou `reativacao_inativos` |
 | `prioridade` | **Nunca lida** — sobrou da fila com prioridade |
 | `simulado` | Gravado por `processar_item_fila` |
 
-> Sete colunas existem no schema e nunca são exercitadas pelo código. O modelo
-> ficou à frente da implementação.
+### `pagamentos`
+
+Histórico financeiro, criado na revisão `8a4c2f19d3e7`.
+
+| Coluna | Nota |
+|---|---|
+| `stripe_event_id` | **Índice único.** É o que torna o webhook idempotente quando o Stripe reenvia |
+| `tipo` | `checkout`, `renovacao`, `falha`, `manual` |
+| `status` | `pago`, `falhou`, `pendente`, `cancelado`, `estornado` |
+| `valor_centavos` | Inteiro, nunca float — centavo não tem fração |
+
+### `admin_usuarios`
+
+O proprietário do sistema. **Não é um tenant**: não tem base de clientes, não
+recebe disparo e nunca aparece no painel do assinante.
+
+| Coluna | Nota |
+|---|---|
+| `email` | Identidade de login, índice único |
+| `senha_hash` | PBKDF2-HMAC-SHA256, 600k iterações |
+| `token_hash` | SHA-256 do token do header `X-LZ-Admin` |
+
+---
+
+## Assinatura em `tenants`
+
+Colunas adicionadas na revisão `8a4c2f19d3e7`. Contas existentes entram como
+`trial` com `assinatura_ativa = false`, então **nada é liberado por accident** ao
+aplicar a migração: o dono abre o acesso uma a uma.
+
+| Coluna | Nota |
+|---|---|
+| `status` | `trial`, `ativo`, `inadimplente`, `suspenso`, `cancelado`. Indexado |
+| `plano` | Chave de `config/planos.py`. Define clientes e mensagens |
+| `stripe_customer_id`, `stripe_subscription_id` | Indexados: toda mensagem do webhook busca a conta por eles |
+| `assinatura_ativa` | Booleano derivado do status, mantido junto para consulta rápida |
+| `renovacao_em` | Vence o teste e a renovação. `NULL` = sem expiração |
+| `motivo_suspensao` | Texto livre. Aparece para o assinante no painel |
 
 ---
 
@@ -200,11 +349,12 @@ Ordem sugerida, do mais urgente ao menos:
 
 | # | Pendência | Risco |
 |---|---|---|
-| 1 | **Limite diário e intervalo entre envios** | Ban do número |
-| 2 | **Opt-out por palavra-chave + template com instrução de descadastro** | LGPD, política WhatsApp |
+| 1 | **Intervalo mínimo entre mensagens**, e teto também para o lembrete de agendamento. Hoje `limite_por_dia` só cobre a reativação | Ban do número |
+| 2 | **Instrução de descadastro nos templates padrão**. O opt_out por palavra-chave já funciona | LGPD, política WhatsApp |
 | 3 | **Task que drene a fila `pendente`, com retry** | Mensagem perdida para sempre |
-| 4 | **Checar `Cliente.opt_out` antes de enviar** | Envio para quem pediu para sair |
+| 4 | ~~Checar `Cliente.opt_out` antes de enviar~~ — feito, em três camadas | — |
 | 5 | **Janela com recuperação** para lembretes perdidos | Cliente não avisado |
+| 6 | **Aviso de vencimento da assinatura**. Hoje o cliente só descobre quando algo falha com `402` | Renovação perdida |
 
 ### P1 — Fechar o produto
 

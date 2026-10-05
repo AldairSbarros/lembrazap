@@ -195,33 +195,36 @@ Com um agendamento `agendado` do mesmo telefone, o status deve virar
 
 **Sintoma:** nenhum cliente recebe aviso, mesmo com tudo saudável.
 
-```bash
-docker compose logs worker | Select-String "Erro ao verificar lembretes"
-```
+> **Corrigido em duas frentes.** Hoje uma chave inválida **não derruba mais** o
+> lote: `formatar_mensagem` substitui o que reconhece e devolve os `avisos` do que
+> sobrou, e o `try/except` do worker passou a ficar **dentro** do laço de tenants —
+> um texto quebrado de um cliente não impede mais o disparo dos outros.
+>
+> Os comandos abaixo servem para diagnóstico e para o caso de você ter um texto
+> salvo antes da correção.
 
-```
-[Worker] Erro ao verificar lembretes: 'foo'
-```
+**Causa original:** a montagem usava `str.format()`. Uma chave desconhecida no texto
+— `{foo}`, `{nome do cliente}`, ou uma chave pela metade como `{nome` — gerava
+`KeyError` e derrubava o lote inteiro.
 
-**Causa:** `formatar_mensagem` usa `str.format()`. Uma chave desconhecida no texto
-— `{foo}`, `{nome do cliente}`, ou uma chave pela metade como `{nome` — gera
-`KeyError`.
-
-**Por que derruba todos os clientes:** o `try/except` envolve o laço que percorre
-**todos os tenants**, e não apenas a configuração do tenant que falhou. Um texto
-malformado de um cliente impede o disparo dos outros.
-
-**Correção:** em `GET /api/conta`, veja o `mensagem_modelo` salvo, corrija a
-chave e grave de novo:
+**Como está agora:** chaves inválidas viram aviso no `POST /api/configuracoes`, e a
+mensagem segue com o trecho substituído pelo que deu para substituir. O painel
+mostra os `avisos` na hora em que você salva.
 
 ```bash
-curl -X POST http://localhost:8000/api/configuracoes \
-  -H "Content-Type: application/json" -H "X-LZ-Token: $TOKEN" \
-  -d '{"horas_antecedencia": 24, "mensagem_modelo": "Oi {nome}, ..."}'
+# conferir o que está gravado e os avisos
+curl -H "X-LZ-Token: $TOKEN" http://localhost:8000/api/configuracoes
 ```
 
-Aceitos: `{nome}`, `{negocio}`, `{servico}`, `{data}`, `{horario}`. Qualquer
-outro nome derruba o lote.
+Aceitos nas duas campanhas:
+
+| Campanha | Chaves |
+|---|---|
+| Lembrete | `{nome}`, `{negocio}`, `{servico}`, `{data}`, `{horario}`, `{telefone}` |
+| Reativação | `{nome}`, `{negocio}`, `{dias}`, `{telefone}` |
+
+Qualquer outro nome vira aviso. O aviso mais comum é o nome do cliente escrito com
+espaço — `{nome do cliente}` em vez de `{nome}`.
 
 ---
 
@@ -382,6 +385,41 @@ curl http://localhost:8000/api/conta -H "X-LZ-Token: $TOKEN"
 
 O `config` mostra o que está realmente gravado.
 
+> **Corrigido.** Agora existe `GET /api/configuracoes` e o painel reidrata o
+> formulário ao carregar. Se você ainda vê barbearia, é navegador com cache antigo —
+> recarregue com Ctrl+Shift+R.
+
+### Importação de CSV não entra nada
+
+Quatro causas, em ordem de probabilidade:
+
+**Faltou a coluna de nome ou a de telefone.** O sistema precisa das duas para
+reconhecer a planilha. A resposta traz `colunas_reconhecidas` com o que ele achou.
+
+```bash
+curl -H "X-LZ-Token: $TOKEN" -F "arquivo=@base.csv" \
+  http://localhost:8000/api/clientes/importar
+```
+
+**O telefone veio sem o 9.** `2199998888` tem 10 dígitos e é recusado — em
+telefone fixo não tem WhatsApp. O formato aceito é `55` + DDD + 9 dígitos + número.
+
+**Bateu o limite do plano.** A resposta traz `excedente_limite` e
+`limite_clientes`. A importação **para** no teto e devolve o que ficou de fora, em
+vez de estourar o plano.
+
+**A conta está suspensa.** A importação responde `402`. Veja
+[seção Assinatura](#assinatura).
+
+### Cliente sumido não entra na reativação
+
+Quase sempre é porque `ultima_visita` está vazia. Cliente sem histórico **não é
+considerado inativo** — não há como saber há quanto tempo não vem, e mandar "faz 90
+dias" para quem acabou de ser cadastrado queima a credibilidade do número.
+
+A tela tem o filtro **Sem histórico** para você ver exatamente quem são esses e
+decidir o que fazer: cadastrar a data da última visita de cada um.
+
 ### "Conectado" aparece mesmo sem WhatsApp conectado
 
 O cartão do painel é fixo no código — não consulta a Evolution. Use:
@@ -400,6 +438,89 @@ print(requests.get(u + '/instance/connectionState/LZ_SEU_TENANT', headers=h, tim
 - A URL da API está **hardcoded** em 4 pontos de `frontend/src/App.jsx`. Para
   apontar para outro host, use um proxy do Vite ou edite o código.
 - `npm run dev` precisa estar rodando; o frontend não está no `docker-compose`.
+
+> **Corrigido.** O painel agora chama a API por caminho relativo (`/api/...`), e em
+> desenvolvimento quem resolve é o proxy do `vite.config.js`. Para apontar o dev
+> para outro host, use `VITE_API_TARGET` — sem editar código.
+
+---
+
+## Assinatura
+
+Sintomas de conta com assinatura bloqueada. O `402` é proposital: o frontend usa
+esse status para abrir a tela de assinatura vencida em vez de mostrar erro.
+
+### `402` ao marcar horário ou importar CSV
+
+A conta está `suspensa`, `inadimplente` ou `cancelada`, **ou** o teste venceu.
+
+```bash
+curl -H "X-LZ-Token: $TOKEN" http://localhost:8000/api/assinatura
+```
+
+A resposta traz `status`, `acesso_liberado` e `mensagem_bloqueio`. Para saber o
+motivo exato (não só o estado):
+
+```bash
+curl -H "X-LZ-Token: $TOKEN" http://localhost:8000/api/assinatura | python -m json.tool
+```
+
+O dono resolve pelo painel administrativo: **reativar** (30 dias), **liberar sem
+prazo**, ou suspender de novo.
+
+### A conta entrou em teste e o acesso não liga
+
+`dias_teste = 0` cria a conta já como **inadimplente**, deliberadamente: sem teste
+não há acesso. Para criar com acesso, mande `dias_teste: 14`.
+
+### O webhook do Stripe não muda o status
+
+Quatro causas, em ordem de probabilidade:
+
+**Falta `STRIPE_WEBHOOK_SECRET`.** Sem ele a rota recusa a requisição com `400`, e
+não valida nada. Copie o segredo de Stripe → Desenvolvedores → Webhooks.
+
+**O evento não está marcado no endpoint do Stripe.** Confira se
+`invoice.paid` e `invoice.payment_failed` estão na lista de eventos do webhook. Se
+faltar o de falha, **a conta nunca é suspensa automaticamente** — que é o mais
+importante dos dois.
+
+**A URL não está alcançável.** Ela precisa ser pública e terminar em
+`/api/admin/stripe/webhook`:
+
+```bash
+curl -X POST https://seudominio/api/admin/stripe/webhook   # deve devolver 400, não timeout
+```
+
+Um `400` de "Assinatura inválida" é sinal de que a rota está viva e o Stripe não
+mandou a assinatura certa.
+
+**Você está em modo teste.** Chave `sk_test_` só processa eventos de teste. Para
+produção, use `sk_live_`.
+
+Veja o log do backend a cada evento:
+
+```bash
+docker compose logs backend | grep stripe
+```
+
+### Suspender a conta não parou o envio
+
+Suspender esvazia a fila pendente e barra o envio no worker. O que **não** para é
+uma mensagem que já saiu da Evolution antes da suspensão — ela chega mesmo assim.
+Espere alguns segundos.
+
+### O Stripe está configurado mas o painel diz que não
+
+O aviso âmbar **"Stripe não configurado"** compara com a variável de ambiente do
+container, não com o painel:
+
+```bash
+docker compose exec backend printenv STRIPE_SECRET_KEY | head -c 8
+```
+
+Vazio? A chave não chegou. Confira se a linha existe no `.env` e rode
+`docker compose up -d` — `restart` **não** relê o `.env**.
 
 ---
 
@@ -439,18 +560,25 @@ Não são erros:
 Não são bugs com conserto imediato — são funcionalidades ausentes. Ignorar
 qualquer uma delas pode **banir seu número no WhatsApp**.
 
-### Sem limite de envio
+### Sem intervalo mínimo entre mensagens
 
-Não existe limite diário nem intervalo mínimo entre mensagens. O worker processa
-tudo da fila em rajada. Mandar para muitos clientes de uma vez faz o WhatsApp
+Existe **limite diário por negócio** (`limite_por_dia`, padrão 50), mas ele só cobre
+a campanha de reativação. O lembrete de agendamento não tem teto: marcar 200
+horários para o mesmo dia faz o worker processar tudo em rajada, e o WhatsApp pode
 tratar o número como spam.
 
-### Sem descadastro
+Marcar aos poucos continua sendo a recomendação.
 
-Não há palavra-chave de descadastro (`SAIR`, `PARAR`, `CANCELAR`), e o `opt_out`
-existente no banco nunca é checado antes de enviar. Os templates padrão também
-não trazem a instrução de resposta — exposição de LGPD e contra a política do
-WhatsApp.
+### Templates sem instrução de descadastro
+
+O **descadastro automático existe**: responder `SAIR`, `PARAR` ou `NÃO QUERO` marca
+o cliente com `opt_out` e ele nunca mais recebe — verificado no filtro da reativação,
+no filtro do lembrete e numa barreira final antes do envio.
+
+O que **não** existe é a frase pronta: os modelos padrão não trazem "responda SAIR
+para não receber mais". Sem essa linha no texto, o cliente não descobre que pode
+sair — e o descadastro que o sistema faz não serve de nada se ele nunca souber que
+existe. Acrescente você mesmo às duas campanhas.
 
 ### Fila sem reprocessamento
 
@@ -475,11 +603,31 @@ O banco guarda UTC (`datetime.utcnow()`) e `{data}`/`{horario}` são renderizado
 direto desse valor. Um horário marcado para 14h local pode aparecer como 18h na
 mensagem ao cliente.
 
-### Sem normalização de telefone
+Este é o defeito mais provável de acontecer sem ninguém perceber, e o mais fácil de
+corrigir agora: marque o horário **4 horas adiantado** em relação ao real e o texto
+mostra a hora certa para o cliente.
 
-O `5592992030250` e `992030250` não são reconhecidos como o mesmo cliente. A
-criação de agendamento compara o número inteiro; o webhook compara os últimos 8
-dígitos. A combinação pode gerar clientes duplicados.
+### Depende de você registrar a visita
+
+A reativação conta os dias desde `clientes.ultima_visita`. Esse campo é atualizado
+em dois lugares: quando o cliente responde `SIM` e quando você clica em **Concluir**
+no agendamento.
+
+Se você atender pelo telefone e não marcar nada, o cliente continua parecendo
+"sumido" e vai receber a reativação sem você querer. Clique em **Concluir**, ou
+registre a visita direto na lista de clientes.
+
+Quem veio da planilha sem data de preenchimento entra como **sem histórico**: fica
+separado na tela e **não** entra na reativação, porque não há como saber há quanto
+tempo não vem. Isso é proposital — mandar "faz 90 dias" para quem acabou de ser
+cadastrado destrói a credibilidade do número.
+
+### A reativação não personaliza o motivo
+
+A mensagem não sabe **por que** o cliente sumiu. O texto é o mesmo para todos os
+inativos, então não dá para variar o argumento por motivo (preço, mudança de
+endereço, fechou por projeto). Dá para escrever uma mensagem mais genérica e deixar
+a ligação para o time fazer em paralelo.
 
 ### Evolução não sincronizada
 
@@ -492,3 +640,70 @@ Você avisou que o QR expirou. Motivos possíveis, em ordem de probabilidade:
 
 O QR mais estável para testar é o pairing via **código de oito dígitos**, que a
 Evolution aceita em `/instance/connect` — ele não expira em segundos.
+
+---
+
+## Painel administrativo
+
+O painel do proprietario fica em `/admin` do mesmo dominio. Operacao completa em
+[PAINEL-ADMIN.md](PAINEL-ADMIN.md).
+
+### `/admin` nao abre ou fica em branco
+
+Confirme que a rota existe no HTML publicado:
+
+```bash
+curl -s https://seudominio/admin | grep -o 'src="[^"]*"'
+```
+
+Tem que devolver 200 com o `index.html` do painel. O vhost ja faz fallback de SPA
+para qualquer caminho; se der 404, o `try_files` do nginx esta incompleto.
+
+### "E-mail ou senha invalidos" com a senha certa
+
+Proposital: login **nao** diferencia e-mail inexistente de senha errada, para nao
+permitir enumerar contas. Se voce nunca criou o admin, rode:
+
+```bash
+docker compose exec backend python criar_admin.py
+```
+
+Rodar de novo com o mesmo e-mail **atualiza** a senha — e o caminho de recuperacao.
+
+### Token de assinante nao abre `/admin`
+
+Esperado, e e proposital. Os dois paineis usam headers diferentes:
+
+| Sessao | Header | Chave no navegador |
+|---|---|---|
+| Assinante | `X-LZ-Token` | `token` |
+| Proprietario | `X-LZ-Admin` | `lz_admin_token` |
+
+Para testar a API do admin por `curl`:
+
+```bash
+ADMIN=$(curl -s -X POST http://localhost:8000/api/admin/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@seudominio.com","senha":"sua-senha"}' \
+  | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
+curl -H "X-LZ-Admin: $ADMIN" http://localhost:8000/api/admin/metricas
+```
+
+### Nao consigo revogar o acesso de alguem
+
+Use **Gerar novo token**, nao suspender. O novo token funciona e o anterior para na
+hora, que e o que voce quer quando o token vazou.
+
+**Suspender** corta o envio mas a pessoa continua entrando e lendo. **Apagar conta**
+nao existe de proposito: perderia o historico de cobranca, e o cliente continuaria
+existindo no Stripe.
+
+### A busca de contas nao encontra o negocio
+
+A busca ignora acento e maiuscula, mas nao cadastro parcial por telefone nem por
+id. Para achar por id, use o filtro direto:
+
+```bash
+curl -H "X-LZ-Admin: $ADMIN" http://localhost:8000/api/admin/contas/<tenant_id>
+```

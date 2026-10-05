@@ -187,33 +187,51 @@ confirme que a mensagem chega. A resposta do cliente não será processada.
 
 ### Passo a passo
 
+> O procedimento abaixo é o da **iContainer/OpenResty**, que é o ambiente em que o
+> sistema roda. O nginx do host não existe nesse ambiente — o vhost vai para o
+> OpenResty em Docker. Se a sua VPS usa nginx nativo, adapte os passos 4 e 5.
+
 ```bash
 # 1. Copiar o projeto
-scp -r .\lembrazap root@SUA_VPS:/root/lembrazap
+git clone git@github.com:AldairSbarros/lembrazap.git /root/lembrazap
+cd /root/lembrazap
 
 # 2. Configurar
-cd /root/lembrazap
 cat > .env <<'EOF'
-EVOLUTION_API_URL=http://127.0.0.1:8080
+# host.docker.internal, NUNCA 127.0.0.1: de dentro do container, 127.0.0.1 é
+# o próprio container, e a Evolution responde "Connection refused" na hora de
+# criar a conexão do WhatsApp. O compose expõe a host com host-gateway.
+EVOLUTION_API_URL=http://host.docker.internal:8080
 EVOLUTION_API_KEY=sua-chave
 MODO_SIMULACAO=0
 WEBHOOK_PUBLIC_URL=https://lembrazap.aletheia.ia.br
 TIMEZONE=America/Manaus
+
+# Stripe é opcional. Sem estas linhas o sistema roda por cobrança manual.
+# FRONTEND_URL=https://lembrazap.aletheia.ia.br
 EOF
 chmod 600 .env
 
-# 3. Subir (portas 5432/6379/8000 só na localhost, expostas via nginx)
+# 3. Subir (apenas 8002 é publicada; o banco e o Redis ficam internos)
 docker compose up -d --build
 docker compose ps
+curl http://localhost:8002/healthz
 
-# 4. Publicar o subdomínio
-sudo cp deploy/nginx-lembrazap.conf /etc/nginx/conf.d/lembrazap.conf
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d lembrazap.aletheia.ia.br
+# 4. Criar o acesso do proprietário (uma vez por instalação)
+docker compose exec backend python criar_admin.py
 
-# 5. Conferir
+# 5. Publicar o subdomínio — o procedimento está na seção "Opção A" acima,
+#    porque a emissão do certificado depende do webroot do vhost de bootstrap.
+#    Resumindo: vhost HTTP de bootstrap → certbot --webroot → vhost final em
+#    deploy/nginx-lembrazap.conf → reload do OpenResty.
+
+# 6. Conferir
 curl https://lembrazap.aletheia.ia.br/healthz
+curl -s -o /dev/null -w '%{http_code}\n' https://lembrazap.aletheia.ia.br/admin
 ```
+
+O passo 6 espera **`200`** no `/admin`. É o mesmo `index.html` do painel, com o
+fallback de SPA do vhost — não é uma rota separada, então não há o que configuração.
 
 ### Segurança na VPS
 
@@ -240,7 +258,10 @@ docker compose exec db psql -U lembrazap_user -c "\l"
 Se o volume antigo já existir com outra senha, o `psql` vai pedir a senha antiga.
 Use `docker compose down -v` (apaga os dados) ou `ALTER USER`.
 
-O `.env` tem a chave da Evolution: `chmod 600` e nunca versione.
+O `.env` tem a chave da Evolution e, se você ligou a cobrança, a da Stripe:
+`chmod 600` e nunca versione. O `.env.example` é o **único** arquivo de configuração
+que pode ser commitado — se ele contém chave real, o push protection do GitHub
+recusa o push.
 
 ---
 
@@ -252,6 +273,12 @@ As migrations são Alembic, em `backend/alembic/versions/`.
 |---|---|
 | `0b5bbedbd982` | Tabelas iniciais: `tenants`, `clientes`, `agenda`, `fila` |
 | `7f3d9c1b2e40` | Alinha o schema aos modelos: `agenda.servico`, `agenda.confirmado_em`, `clientes.ultima_resposta` |
+| `8a4c2f19d3e7` | Assinatura e cobrança: campos de assinatura em `tenants`, tabelas `pagamentos` e `admin_usuarios` |
+
+> A revisão `8a4c2f19d3e7` coloca **todas** as contas existentes em `trial` com a
+> assinatura fechada. Isso é proposital: nada é liberado por acidente ao migrar.
+> Depois de aplicar, abra `/admin` e libere o acesso das contas que já deviam
+> funcionar.
 
 Comandos:
 
@@ -261,6 +288,10 @@ docker compose exec backend alembic history        # linha do tempo
 docker compose exec backend alembic upgrade head   # aplica pendentes
 docker compose exec backend alembic downgrade -1   # desfaz a última
 ```
+
+O `entrypoint.sh` já roda `alembic upgrade head` no boot do backend, então subir
+com `docker compose up -d` aplica a migration sozinho. O comando manual é para
+inspeção.
 
 > `upgrade head` roda sozinho no boot do `backend`. Se você rodar manualmente
 > enquanto o container sobe, pode colidir. O `worker` não roda migration.
