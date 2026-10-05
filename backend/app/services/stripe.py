@@ -223,26 +223,45 @@ def situacao(chave: str) -> dict:
     }
 
 
-def criar_checkout(tenant, plano_chave: str, base_url: str) -> dict:
+def criar_checkout(
+    tenant,
+    plano_chave: str,
+    base_url: str,
+    email: str = "",
+    token: str = "",
+) -> dict:
     """Abre a sessão de checkout para um tenant pagar a assinatura.
 
     `client_reference_id` carrega o id do tenant para o webhook reencontrar a conta
     mesmo que o cliente abandone o checkout e volte depois.
+
+    `email` e `token` atendem o caminho self-service, em que a conta acabou de ser
+    criada e ainda não tem nada gravado. `token` só entra na `success_url` quando
+    informado, e é o mesmo token de acesso que o cadastro emite.
     """
     from app.config.planos import obter_plano
 
     plano = obter_plano(plano_chave)
     price_id = garantir_preco(plano_chave)
 
+    if token:
+        destino = f"{base_url}/?plano={plano_chave}&token={token}"
+    else:
+        destino = f"{base_url}/assinatura?status=ok"
+
     stripe = _client()
     sessao = stripe.checkout.Session.create(
         mode="subscription",
         client_reference_id=tenant.id,
         customer=tenant.stripe_customer_id or None,
+        # O e-mail vai preenchido para a Stripe não pedir de novo. Sem isso o
+        # comprador digita o endereço duas vezes, e a chance de errar uma delas
+        # quebra a entrega da cobrança no futuro.
+        customer_email=email or None,
         line_items=[{"price": price_id, "quantity": 1}],
         subscription_data={"metadata": {"tenant_id": tenant.id, "plano": plano_chave}},
         metadata={"tenant_id": tenant.id, "plano": plano_chave},
-        success_url=f"{base_url}/assinatura?status=ok",
+        success_url=destino,
         cancel_url=f"{base_url}/assinatura?status=cancelado",
         locale="pt-BR",
     )

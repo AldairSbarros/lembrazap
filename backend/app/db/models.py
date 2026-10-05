@@ -20,8 +20,21 @@ class Tenant(Base):
     criado_em = Column(DateTime, default=datetime.utcnow)
     ultima_envio_em = Column(DateTime, nullable=True)
 
+    # E-mail do titular. Coluna de verdade, e não dentro de `config`, porque a
+    # assinatura self-service localiza a conta por ele: quem clica em "Assinar"
+    # digita só o e-mail e a Stripe devolve o pagamento. Buscar isso dentro de um
+    # JSON exigiria varrer a tabela inteira, e a conta pendente precisa ser
+    # reencontrada a cada tentativa.
+    #
+    # `index=True` sem unicidade: pode haver contas antigas repetindo e-mail,
+    # criadas pelo cadastro por nome, que não exigiam e-mail. Impor unicidade
+    # agora quebraria a instalação. A deduplicação vale para o caminho novo.
+    email_contato = Column(String, default="", index=True)
+
     # --- Assinatura e cobrança ---
-    # status: trial, ativo, inadimplente, suspenso, cancelado
+    # status: pendente, trial, ativo, inadimplente, suspenso, cancelado
+    # `pendente` é a conta criada pelo checkout antes do pagamento: existe para o
+    # webhook reencontrar, mas não libera acesso nem aparece como assinante.
     status = Column(String, default="trial", index=True)
     plano = Column(String, default="starter")
     stripe_customer_id = Column(String, default="", index=True)

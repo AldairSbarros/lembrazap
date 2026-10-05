@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus, UserCheck } from 'lucide-react';
+import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus, UserCheck, CreditCard } from 'lucide-react';
 import Clientes from './Clientes';
+import Planos from './Planos';
 
 const TEMPLATES_POR_NICHO = {
   barbearia: {
@@ -27,10 +28,20 @@ const TEMPLATES_POR_NICHO = {
 
 export default function App() {
   const [nome, setNome] = useState('');
-  const [etapa, setEtapa] = useState('registro');
-  const [tokenAuth, setTokenAuth] = useState('');
+  const [etapa, setEtapa] = useState(() => {
+    // Volta da Stripe com `?plano=...&token=...`. O token já é o acesso da conta,
+    // então o painel abre direto em vez de pedir o negócio de novo.
+    if (new URLSearchParams(window.location.search).get('token')) return 'dashboard';
+    return new URLSearchParams(window.location.search).get('plano') ? 'planos' : 'registro';
+  });
+  const [tokenAuth, setTokenAuth] = useState(
+    () => new URLSearchParams(window.location.search).get('token') || ''
+  );
   const [qrCodeBase64, setQrCodeBase64] = useState('');
   const [erro, setErro] = useState('');
+  const [verificando, setVerificando] = useState(
+    () => new URLSearchParams(window.location.search).has('token')
+  );
   
   // Configurações
   const [nichoSelecionado, setNichoSelecionado] = useState('barbearia');
@@ -145,6 +156,52 @@ export default function App() {
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [etapa, tokenAuth]);
+
+  // Volta da Stripe: o pagamento é confirmado, mas o webhook pode levar um ou
+  // dois segundos para chegar. Sem esta espera, o primeiro GET já sairia com 402
+  // e a pessoa veria "assinatura pendente" logo depois de ter pago.
+  //
+  // Só roda quando o token veio da query string. Quem entra por outro caminho já
+  // estava com a conta ativa e não precisa de espera nenhuma.
+  useEffect(() => {
+    const veioDaStripe = new URLSearchParams(window.location.search).has('token');
+    if (!veioDaStripe || !tokenAuth || etapa !== 'dashboard') return;
+
+    let tentativas = 0;
+    let vivo = true;
+
+    const confirmar = async () => {
+      if (!vivo) return;
+      // 45s a 3s por tentativa. O webhook responde em segundos; se passar disso,
+      // o problema é outro e insistir só atrasa a mensagem de erro verdadeira.
+      if (tentativas++ > 15) {
+        setVerificando(false);
+        return;
+      }
+      try {
+        const res = await fetch('/api/assinatura', {
+          headers: { 'X-LZ-Token': tokenAuth },
+        });
+        if (res.status === 200) {
+          const dados = await res.json();
+          if (dados.acesso_liberado) {
+            setVerificando(false);
+            carregarAgendamentos(tokenAuth);
+            carregarConfiguracoes(tokenAuth);
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return;
+          }
+        }
+      } catch {
+        // Rede instável não cancela a espera: a próxima tentativa tenta de novo.
+      }
+      setTimeout(confirmar, 3000);
+    };
+
+    confirmar();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenAuth, etapa]);
 
   // Depois das funções: o effect as usa, e declarar antes quebraria a ordem.
   const salvarConfiguracoes = async (e) => {
@@ -265,7 +322,7 @@ export default function App() {
 
         .lz-card {
           width: 100%;
-          max-width: ${etapa === 'dashboard' ? '920px' : '440px'};
+          max-width: ${etapa === 'dashboard' || etapa === 'planos' ? '920px' : '440px'};
           background: #1e293b;
           border: 1px solid #334155;
           border-radius: 24px;
@@ -513,13 +570,38 @@ export default function App() {
                   Configurar WhatsApp
                   <ArrowRight size={18} />
                 </button>
+
+                <div className="lz-divisor"><span>ou</span></div>
+
+                <button
+                  type="button"
+                  className="lz-btn lz-btn-secundario"
+                  onClick={() => { setErro(''); setEtapa('planos'); }}
+                >
+                  <CreditCard size={18} />
+                  Ver planos e assinar
+                </button>
               </form>
+            )}
+
+            {etapa === 'planos' && (
+              <Planos aoVoltar={() => setEtapa('registro')} />
             )}
 
             {etapa === 'carregando' && (
               <div style={{ textAlign: 'center', padding: '30px 0' }}>
                 <Loader2 size={42} color="#10b981" className="spin" style={{ margin: '0 auto' }} />
                 <p style={{ marginTop: '16px', color: '#94a3b8' }}>A preparar infraestrutura...</p>
+              </div>
+            )}
+
+            {etapa === 'dashboard' && verificando && (
+              <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                <Loader2 size={42} color="#10b981" className="spin" style={{ margin: '0 auto' }} />
+                <p style={{ marginTop: '16px', color: '#94a3b8' }}>Confirmando seu pagamento...</p>
+                <p style={{ marginTop: '6px', color: '#64748b', fontSize: '13px' }}>
+                  Só um instante. Assim que a Stripe confirmar, o painel abre.
+                </p>
               </div>
             )}
 
@@ -544,7 +626,7 @@ export default function App() {
               </div>
             )}
 
-            {etapa === 'dashboard' && (
+            {etapa === 'dashboard' && !verificando && (
               <div>
                 <div className="dash-grid">
                   <div className="dash-card">

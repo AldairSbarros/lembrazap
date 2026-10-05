@@ -206,7 +206,8 @@ def _resumo(tenant: Tenant, db: Session) -> dict:
         "id": tenant.id,
         "nome": tenant.nome,
         "negocio": tenant.negocio,
-        "email_contato": (tenant.config or {}).get("email_contato", ""),
+        # Lê a coluna, com o JSON como reserva para contas criadas antes da migração.
+  "email_contato": tenant.email_contato or (tenant.config or {}).get("email_contato", ""),
         "status": tenant.status or "trial",
         "status_rotulo": assinatura.ROTULO_STATUS.get(tenant.status or "trial", tenant.status),
         "plano": tenant.plano,

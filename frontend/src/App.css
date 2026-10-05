@@ -1282,3 +1282,294 @@ body {
     padding: 20px 16px 48px;
   }
 }
+/* ---------------------------------------------------------------- Planos
+
+   Grid de cards e o toast de e-mail. O `--preco` do card com destaque só existe
+   para o degradê da faixa, não para algo calculado em JS. */
+
+.lz-planos {
+  --plano-borda: #1e293b;
+  width: 100%;
+}
+
+.lz-planos-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.lz-planos-titulo {
+  font-size: 30px;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 0 0 6px;
+}
+
+.lz-planos-sub {
+  color: #94a3b8;
+  margin: 0;
+  font-size: 15px;
+}
+
+.lz-planos-carregando {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 56px 0;
+  color: #94a3b8;
+}
+
+.lz-planos-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.lz-card-plano {
+  position: relative;
+  background: #0b1220;
+  border: 1px solid var(--plano-borda);
+  border-radius: 18px;
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lz-card-destaque {
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px #10b98133, 0 12px 32px -12px rgba(16, 185, 129, 0.45);
+}
+
+.lz-faixa {
+  position: absolute;
+  top: -11px;
+  left: 24px;
+  background: #10b981;
+  color: #052e21;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lz-plano-nome {
+  font-size: 19px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.lz-plano-desc {
+  color: #94a3b8;
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.45;
+  flex: 1;
+}
+
+.lz-plano-preco {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #f8fafc;
+}
+
+.lz-plano-preco strong {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.lz-plano-preco span {
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.lz-plano-lista {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lz-plano-lista li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.lz-plano-lista svg {
+  flex-shrink: 0;
+  color: #10b981;
+  margin-top: 2px;
+}
+
+.lz-btn-destaque {
+  background: #10b981;
+  color: #052e21;
+}
+
+.lz-btn-destaque:hover {
+  background: #34d399;
+}
+
+.lz-btn-fantasma {
+  width: auto;
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid var(--plano-borda);
+  box-shadow: none;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+.lz-btn-fantasma:hover {
+  background: #0b1220;
+  color: #f8fafc;
+}
+
+.lz-planos-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 28px;
+}
+
+/* ------------------------------------------------- Toast de e-mail (assinar)
+
+   Fundo com `backdrop-filter`: dá para ver os cards atrás, mas escurecidos o
+   bastante para o foco ficar só no formulário. `align-items: flex-end` no
+   celular, para o teclado do celular não cobrir o campo de e-mail. */
+
+.lz-toast-fundo {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+  animation: lz-aparece 0.18s ease-out;
+}
+
+@keyframes lz-aparece {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lz-toast {
+  position: relative;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 20px;
+  padding: 30px 26px 24px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: lz-sobe 0.22s ease-out;
+}
+
+@keyframes lz-sobe {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.lz-toast-fechar {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+}
+
+.lz-toast-fechar:hover {
+  color: #f8fafc;
+  background: #1e293b;
+}
+
+.lz-toast-icone {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lz-toast-titulo {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.lz-toast-texto {
+  margin: -8px 0 0;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.lz-toast form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lz-toast-nota {
+  margin: 0;
+  color: #64748b;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .lz-planos-titulo { font-size: 25px; }
+  .lz-planos-grade { grid-template-columns: 1fr; }
+  .lz-toast-fundo { align-items: flex-end; padding: 12px; }
+  .lz-toast { padding: 26px 20px 20px; }
+}
+
+/* Separador "ou" entre "Configurar WhatsApp" e "Ver planos e assinar". */
+.lz-divisor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #64748b;
+  font-size: 12.5px;
+  margin: 18px 0;
+}
+
+.lz-divisor::before,
+.lz-divisor::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #334155;
+}

@@ -38,6 +38,19 @@ DESCRICOES = {
     "business": "Para operações com múltiplos atendentes e volume alto.",
 }
 
+# Plano com destaque visual na tela de planos. Dado de apresentação, então fica
+# aqui com o resto do catálogo: a tela de planos é gerada a partir dele, e um
+# destaque escrito dentro do JSX não sobrevive a uma troca de plano.
+DESTAQUES = {"pro"}
+
+# Recursos que o card mostra abaixo do preço. Os dois primeiros limites já são
+# renderizados à parte, então não se repetem aqui.
+RECURSOS = {
+    "starter": ["Importação por planilha (CSV)", "Mensagens de reativação automática"],
+    "pro": ["Agendamentos ilimitados", "Mensagens de reativação automática"],
+    "business": ["Agendamentos ilimitados", "Mensagens de reativação automática", "Relatório de comparação por período"],
+}
+
 
 def _preco(chave: str) -> int:
     """Preço do ambiente tem precedência; senão usa o padrão do catálogo."""
@@ -63,6 +76,8 @@ def listar_planos() -> list[dict]:
                 "preco_reais": f"{centavos / 100:.2f}".replace(".", ","),
                 "limite_clientes": limites["clientes"],
                 "limite_mensagens_mes": limites["mensagens"],
+                "destaque": chave in DESTAQUES,
+                "recursos": RECURSOS.get(chave, []),
                 # Sem Price configurado o checkout do Stripe não pode ser aberto.
                 "disponivel_stripe": bool(_stripe_price(chave)),
             }

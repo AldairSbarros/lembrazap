@@ -23,6 +23,7 @@ STATUS_LIBERA_ACESSO = {"ativo", "trial"}
 
 # Tradução para o painel admin e para o mensajeiro do assinante.
 ROTULO_STATUS = {
+    "pendente": "Aguardando pagamento",
     "trial": "Período de teste",
     "ativo": "Ativo",
     "inadimplente": "Inadimplente",
@@ -31,6 +32,7 @@ ROTULO_STATUS = {
 }
 
 MSG_BLOQUEIO = {
+    "pendente": "Finalize o pagamento para começar a usar.",
     "inadimplente": "Sua assinatura está com pagamento pendente. Regularize para voltar a enviar mensagens.",
     "suspenso": "Sua conta está suspensa. Fale com o suporte para reativar.",
     "cancelado": "Sua assinatura foi cancelada. Reative quando quiser voltar.",
@@ -119,7 +121,9 @@ def _marcar_ativo(db, tenant: Tenant, renovacao_em, plano: str) -> None:
     mudancas = []
     if not tenant.assinatura_ativa:
         mudancas.append("assinatura_ativa=True")
-    if tenant.status in ("inadimplente", "suspenso"):
+    # `pendente` entra aqui: é a primeira ativação de uma conta que veio do
+    # checkout self-service, e é o caminho normal dela — não uma reativação.
+    if tenant.status != "ativo":
         mudancas.append(f"status {tenant.status}->ativo")
     tenant.status = "ativo"
     tenant.assinatura_ativa = True
