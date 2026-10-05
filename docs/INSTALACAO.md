@@ -119,7 +119,12 @@ docker exec ic-openresty-wQHe openresty -t && docker exec ic-openresty-wQHe open
 
 # 4. Painel: build do frontend para o mesmo vhost (mesma origem, sem CORS)
 #    Feito em container porque o Vite 8 exige Node >=20 e a VPS tem Node 18.
+#    O `rm -rf` antes do build é obrigatório: `--output type=local` escreve por
+#    cima mas não apaga o que sobrou do deploy anterior, e os arquivos antigos
+#    com hash ficariam publicadas na pasta do site.
+rm -rf frontend/dist
 docker build -f frontend/Dockerfile --output type=local,dest=frontend/dist frontend/
+rm -rf $SITE/index && mkdir -p $SITE/index
 cp -r frontend/dist/* $SITE/index/
 ```
 
