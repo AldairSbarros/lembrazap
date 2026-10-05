@@ -16,31 +16,55 @@ o painel administrativo, e vice-versa.
 O admin não é uma conta de cliente — não tem base, não recebe disparo e não aparece
 na lista de assinantes. Ele vive na tabela `admin_usuarios`.
 
+### Seed (recomendado em deploy)
+
 ```bash
-cd /root/lembrazap
+docker compose exec backend python seed.py
+```
+
+O seed lê `ADMIN_EMAIL`, `ADMIN_NOME` e `ADMIN_SENHA` do `.env`. Deixando a senha
+**no `.env`**, e não como argumento na linha de comando, ela não fica no histórico
+do shell nem aparece no `ps` da máquina.
+
+Se `ADMIN_SENHA` estiver vazio, o seed gera uma senha aleatória e mostra **uma
+única vez**.
+
+Comandos:
+
+| Comando | O que faz |
+|---|---|
+| `seed.py` | Garante o master user. Seguro para rodar a cada deploy |
+| `seed.py --status` | Mostra o que existe. Não altera nada |
+| `seed.py --demo` | Cria também uma conta de demonstração com 7 clientes |
+| `seed.py --forcar-senha` | Reaplica `ADMIN_SENHA` mesmo se o admin já existe |
+
+### A regra que importa
+
+> **Reexecutar o seed nunca sobrescreve a senha de um admin que já existe.**
+
+Um seed que resetasse a senha a cada deploy traria a conta de volta ao padrão de
+fábrica em produção. Por isso `ADMIN_SENHA` só vale na primeira criação, ou com
+`--forcar-senha`.
+
+Se `ADMIN_SENHA` estiver definida e o seed a ignorar, ele **avisa** — porque essa é a
+combinação que mais confunde: você troca a senha no `.env`, roda o seed achando que
+aplicou, e o deploy seguinte volta à antiga.
+
+### Vários administradores
+
+Cada `ADMIN_EMAIL` diferente cria um acesso novo, e todos veem todas as contas. Para
+um operador assistente, defina um `ADMIN_EMAIL` diferente e rode o seed de novo.
+
+### Primeiro acesso manual (alternativa)
+
+Se preferir digitar a senha no terminal em vez de deixá-la no `.env`:
+
+```bash
 docker compose exec backend python criar_admin.py
 ```
 
-Ele pergunta o e-mail e a senha. Para não digitar interativamente (útil em
-instalação automatizada):
-
-```bash
-docker compose exec \
-  -e ADMIN_EMAIL=voce@seudominio.com.br \
-  -e ADMIN_SENHA='uma-senha-forte-aqui' \
-  -e ADMIN_NOME='Seu nome' \
-  backend python criar_admin.py
-```
-
-O script imprime um token inicial, mas **você não precisa usá-lo**: ele existe só
-caso queira chamar a API direto. Para usar o painel, basta abrir `/admin` e entrar
-com e-mail e senha.
-
-Rodar o script de novo com o mesmo e-mail **atualiza** a senha em vez de criar
-duplicata. É o caminho de recuperação se esquecer a senha.
-
-Trocar a senha depois de entrar também dá pelo próprio painel, e aí a senha atual é
-exigida — se o token vazar, o atacante não troca a senha.
+Ele pergunta o e-mail e a senha. Rodar de novo com o mesmo e-mail atualiza a senha —
+é o caminho de recuperação se esquecer.
 
 ---
 
@@ -49,25 +73,60 @@ exigida — se o token vazar, o atacante não troca a senha.
 Sem nenhuma configuração o sistema funciona **por cobrança manual**: você marca a
 conta como ativa, suspende ou estende o prazo à mão. Nada quebra.
 
-Para cobrança automática por cartão, preencha no `.env`:
+Para cobrança automática por cartão, basta **uma variável**:
 
 | Variável | Onde achar |
 |---|---|
 | `STRIPE_SECRET_KEY` | Stripe → Desenvolvedores → Chaves da API → *Secret key* (prefixo `sk_test_` em teste) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe → Desenvolvedores → Webhooks → criado o endpoint, o segredo aparece na URL de comando |
-| `STRIPE_PRICE_ID_STARTER` | Stripe → Produtos → preço recorrente do Starter (`price_...`) |
-| `STRIPE_PRICE_ID_PRO` | idem, do Pro |
-| `STRIPE_PRICE_ID_BUSINESS` | idem, do Business |
 | `FRONTEND_URL` | `https://lembrazap.aletheia.ia.br` |
-
-Depois:
 
 ```bash
 docker compose up -d
 ```
 
-O painel mostra um aviso âmbar **"Stripe não configurado"** no topo enquanto as
-chaves faltarem — é o sinal de que a cobrança ainda é manual.
+O painel mostra um aviso âmbar **"Stripe não configurado"** no topo enquanto a chave
+faltar — é o sinal de que a cobrança ainda é manual.
+
+### Você **não precisa** criar produto nenhum na Stripe
+
+Essa era a dúvida mais comum na instalação, e a resposta é **não precisa**. Quando
+alguém clica em **Assinar** e o plano ainda não tem preço, o sistema cria o produto e
+o preço recorrente pela API da Stripe na hora, e abre o checkout. O cliente não vê
+nada disso — paga e a assinatura ativa.
+
+O `price_id` fica guardado em `planos_stripe`, então o produto é criado **uma vez por
+plano**, não uma vez por venda. Antes de criar, o sistema também procura na Stripe por
+`metadata['lembrazap_plano']`: se o banco for recriado, ele reencontra o produto em
+vez de duplicar.
+
+Para conferir o que existe:
+
+```bash
+docker compose exec backend python seed.py --status
+```
+
+Se você preferir fixar os preços à mão no painel da Stripe, defina
+`STRIPE_PRICE_ID_STARTER`, `_PRO` e `_BUSINESS` no `.env` — essa configuração
+**sempre vence** sobre a criação automática.
+
+### Mudar o preço depois
+
+> **Atenção:** na Stripe, preço é imutável. Quem assina hoje paga o preço gravado em
+> `planos_stripe`. Mudar `planos.py` de R$ 99 para R$ 109 afeta **só quem assinar
+> depois**.
+
+O painel marca o plano como divergente quando o valor do catálogo não bate com o que
+a Stripe está cobrando. Para gerar um preço novo:
+
+```bash
+curl -X POST http://localhost:8002/api/admin/planos/pro/sincronizar \
+  -H "X-LZ-Admin: $ADMIN"
+```
+
+Isso cria um preço novo para os próximos assinantes. **Não move quem já está
+assinado** — para isso é preciso editar o item de cada assinatura na Stripe
+(*Assinaturas → Editar item → Atualizar preço*).
 
 ### Planos
 

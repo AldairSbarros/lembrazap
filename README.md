@@ -93,13 +93,19 @@ pública. Ver [docs/ERROS.md](docs/ERROS.md#o-webhook-não-chega).
 | `REDIS_URL` | não | Injetada pelo compose |
 | `STRIPE_SECRET_KEY` | não | Chave da Stripe. Sem ela a cobrança é **manual** |
 | `STRIPE_WEBHOOK_SECRET` | cobrança automática | Prova que o webhook veio do Stripe |
-| `STRIPE_PRICE_ID_*` | cobrança automática | Ids dos preços recorrentes de cada plano |
+| `STRIPE_PRICE_ID_*` | não | Opcional. Fica **vazio**: o produto e o preço são criados pela API na primeira compra |
 | `STRIPE_PRECIO_*` | não | Preço em centavos. Vazio = usa `app/config/planos.py` |
 | `FRONTEND_URL` | cobrança automática | URL dos botões de assinar e gerenciar assinatura |
+| `ADMIN_EMAIL`, `ADMIN_NOME`, `ADMIN_SENHA` | produção | Master user do painel. Consumido por `seed.py` |
 
 Copie `.env.example` e preencha. **Nunca comite o `.env`** — ele tem a chave da
 Evolution e a da Stripe. O `.gitignore` já protege, e o push protection do GitHub
 recusa qualquer chave que escape para um arquivo versionado.
+
+**Criar produto na Stripe não é passo manual.** Com `STRIPE_SECRET_KEY` e
+`STRIPE_WEBHOOK_SECRET` preenchidas, o produto e o preço de cada plano são criados
+pela API quando alguém assina pela primeira vez. Preencher `STRIPE_PRICE_ID_*` é
+opcional e só para você querer fixar os preços à mão.
 
 Para operar o SaaS (contas, cobrança, suspensão), veja
 [docs/PAINEL-ADMIN.md](docs/PAINEL-ADMIN.md).
@@ -117,7 +123,8 @@ lembrazap/
 ├── backend/
 │   ├── Dockerfile
 │   ├── entrypoint.sh         roda `alembic upgrade head` e sobe o uvicorn
-│   ├── criar_admin.py        cria a conta do proprietário (roda uma vez)
+│   ├── seed.py               master user e dados de demonstração (idempotente)
+│   ├── criar_admin.py        primeiro acesso, por prompt interativo
 │   ├── alembic/              migrations do banco
 │   └── app/
 │       ├── main.py           monta a API e a descrição do OpenAPI
@@ -128,7 +135,7 @@ lembrazap/
 │       │   ├── assinatura.py planos, limites e checkout
 │       │   └── admin.py      contas, cobrança e métricas do proprietário
 │       ├── config/planos.py  catálogo de planos (dados, não código)
-│       ├── db/               engine, sessão e modelos (6 tabelas)
+│       ├── db/               engine, sessão e modelos (7 tabelas)
 │       ├── services/         Evolution, telefone, mensagem, assinatura, Stripe, senha
 │       └── worker/           Celery: app, tasks e beat
 └── frontend/

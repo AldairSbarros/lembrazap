@@ -208,7 +208,16 @@ WEBHOOK_PUBLIC_URL=https://lembrazap.aletheia.ia.br
 TIMEZONE=America/Manaus
 
 # Stripe é opcional. Sem estas linhas o sistema roda por cobrança manual.
+# Com apenas STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET, o produto e o preço são
+# criados pela API na primeira compra — não é preciso criar nada no painel da
+# Stripe.
 # FRONTEND_URL=https://lembrazap.aletheia.ia.br
+
+# Master user. Consumido por `python seed.py`. A senha fica AQUI, e não como
+# argumento de CLI, para não ir para o histórico do shell.
+ADMIN_EMAIL=voce@seudominio.com.br
+ADMIN_NOME=Seu nome
+ADMIN_SENHA=
 EOF
 chmod 600 .env
 
@@ -217,8 +226,10 @@ docker compose up -d --build
 docker compose ps
 curl http://localhost:8002/healthz
 
-# 4. Criar o acesso do proprietário (uma vez por instalação)
-docker compose exec backend python criar_admin.py
+# 4. Criar o master user. Idempotente: rodar de novo não sobrescreve a senha.
+#    Sem ADMIN_SENHA no .env, gera uma senha e mostra uma única vez.
+docker compose exec backend python seed.py
+docker compose exec backend python seed.py --status   # confere o que existe
 
 # 5. Publicar o subdomínio — o procedimento está na seção "Opção A" acima,
 #    porque a emissão do certificado depende do webroot do vhost de bootstrap.

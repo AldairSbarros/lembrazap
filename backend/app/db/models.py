@@ -118,6 +118,33 @@ class Pagamento(Base):
     tenant = relationship("Tenant", back_populates="pagamentos")
 
 
+class PlanoStripe(Base):
+    """Cache dos preços recorrentes criados sob demanda no Stripe.
+
+    O produto e o preço são criados automaticamente na primeira compra de cada
+    plano, sem passo manual no painel do Stripe. Guardamos o `price_id` aqui para
+    não chamar a API a cada checkout — e, mais importante, para não criar um
+    produto novo a cada venda.
+
+    A busca por `metadata['lembrazap_plano']` é a rede de segurança: se o banco for
+    recriado, o sistema reencontra o produto existente em vez de duplicá-lo.
+
+    O preço gravado aqui é o **preço cobrado dos assinantes daquele plano**. Mudar
+    o valor em `app/config/planos.py` só afeta quem assinar depois — quem já está
+    assinado continua no preço antigo, e é preciso migrar a assinatura na Stripe
+    para mudar isso.
+    """
+
+    __tablename__ = "planos_stripe"
+
+    chave = Column(String, primary_key=True)  # starter, pro, business
+    product_id = Column(String, default="")
+    price_id = Column(String, default="", index=True)
+    preco_centavos = Column(Integer, default=0)
+    criado_em = Column(DateTime, default=datetime.utcnow)
+    atualizado_em = Column(DateTime, default=datetime.utcnow)
+
+
 class AdminUsuario(Base):
     """Conta do proprietário do sistema, separada de `Tenant` de propósito.
 

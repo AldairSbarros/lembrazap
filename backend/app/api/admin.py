@@ -231,7 +231,83 @@ def _resumo(tenant: Tenant, db: Session) -> dict:
     dependencies=[Depends(obter_admin_atual)],
 )
 def planos():
-    return {"planos": listar_planos(), "stripe_configurado": stripe.disponivel()}
+    """Catálogo com o preço **efetivo** de cada plano.
+
+    `preco_centavos` vem do catálogo; `em_vigor_centavos` é o que a Stripe está
+    cobrando hoje. Divergem quando o dono mudou o valor em `planos.py` e ainda não
+    rodou a sincronização — e a consequência não é só de exibição, ver
+    `POST /planos/{chave}/sincronizar`.
+    """
+    resultado = []
+    for plano in listar_planos():
+        if stripe.disponivel():
+            em_vigor = stripe.situacao(plano["chave"])
+        else:
+            em_vigor = {
+                "origem": "sem_stripe",
+                "price_id": "",
+                "product_id": "",
+                "preco_centavos": 0,
+                "criado_em": None,
+            }
+        resultado.append(
+            {
+                **plano,
+                "stripe": em_vigor,
+                "divergente": bool(
+                    em_vigor["preco_centavos"]
+                    and em_vigor["preco_centavos"] != plano["preco_centavos"]
+                ),
+            }
+        )
+
+    return {"planos": resultado, "stripe_configurado": stripe.disponivel()}
+
+
+@router.post(
+    "/planos/{chave}/sincronizar",
+    summary="Recria o preço de um plano no Stripe",
+    dependencies=[Depends(obter_admin_atual)],
+)
+def sincronizar_plano(
+    chave: str,
+    db: Session = Depends(get_db),
+    admin: AdminUsuario = Depends(obter_admin_atual),
+):
+    """Cria um preço novo com o valor atual do catálogo.
+
+    **Não muda o que os assinantes atuais pagam.** O `price_id` antigo continua
+    valendo para as assinaturas criadas com ele — na Stripe, preço é imutável e
+    mover uma assinatura exige editar o item dela. Esta rota só faz novos
+    assinantes pagarem o valor novo.
+
+    Quem já está assinado precisa ser migrado na Stripe: em cada assinatura,
+    *Editar item* → *Atualizar preço* → escolher o novo.
+    """
+    chave = chave.strip().lower()
+    if not any(p["chave"] == chave for p in listar_planos()):
+        raise HTTPException(status_code=404, detail=f"Plano '{chave}' não existe.")
+
+    if not stripe.disponivel():
+        raise HTTPException(
+            status_code=503, detail="Stripe não configurado neste ambiente."
+        )
+
+    try:
+        resultado = stripe.sincronizar(chave)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Stripe respondeu com erro: {exc}")
+
+    return {
+        "ok": True,
+        **resultado,
+        "mensagem": (
+            "Novo preço criado. Assinantes atuais continuam no preço antigo — "
+            "migre as assinaturas na Stripe para aplicar o valor novo a eles."
+        ),
+    }
 
 
 @router.get(

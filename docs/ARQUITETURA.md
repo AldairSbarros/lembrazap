@@ -167,7 +167,7 @@ mudar preço não exige mexer no código.
 
 `database.py` cria a engine no **import do módulo** — sem `DATABASE_URL` a API
 não sobe (é o motivo de não existir execução fora do Docker sem exportar a
-variável). `models.py` tem as seis tabelas.
+variável). `models.py` tem as sete tabelas.
 
 ### `backend/app/services/evolution.py`
 
@@ -197,7 +197,7 @@ mensagem que já estava na fila antes da suspensão.
 
 ## Modelo de dados
 
-Seis tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
+Sete tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
 
 ### `tenants` — uma linha por conta
 
@@ -254,6 +254,35 @@ Histórico financeiro, criado na revisão `8a4c2f19d3e7`.
 | `status` | `pago`, `falhou`, `pendente`, `cancelado`, `estornado` |
 | `valor_centavos` | Inteiro, nunca float — centavo não tem fração |
 
+### `planos_stripe`
+
+Cache dos `price_id` criados sob demanda. Existe porque preço pré-criado no painel
+da Stripe é o caminho que a documentação deles recomenda, mas exige passo manual na
+instalação.
+
+| Coluna | Nota |
+|---|---|
+| `chave` | PK: `starter`, `pro`, `business` |
+| `price_id` | O que vai no `line_items` do checkout |
+| `preco_centavos` | O que a Stripe está cobrando. Divergir do catálogo é sinalizado no admin |
+
+A ordem de resolução em `garantir_preco()` é:
+
+1. `STRIPE_PRICE_ID_*` no ambiente — configuração explícita sempre vence.
+2. `planos_stripe` — evita chamada à API em todo checkout.
+3. Busca na Stripe por `metadata['lembrazap_plano']` — rede de segurança para o
+   caso do banco ser recriado.
+4. Só então cria Product + Price.
+
+O passo 3 é o que torna a automação segura: sem ele, recriar o banco duplicaria
+todos os produtos. A busca é feita listando produtos ativos e filtrando em Python,
+**não** por `products.search`, porque a Search API depende de habilitação na conta
+e falha com `api_key_invalid` quando não está.
+
+**Limite conhecido:** `price_id` é imutável na Stripe. Mudar `planos.py` afeta só
+quem assinar depois; mover assinantes existentes é operação manual na Stripe.
+`POST /api/admin/planos/{chave}/sincronizar` cria um preço novo, não migra ninguém.
+
 ### `admin_usuarios`
 
 O proprietário do sistema. **Não é um tenant**: não tem base de clientes, não
@@ -264,6 +293,10 @@ recebe disparo e nunca aparece no painel do assinante.
 | `email` | Identidade de login, índice único |
 | `senha_hash` | PBKDF2-HMAC-SHA256, 600k iterações |
 | `token_hash` | SHA-256 do token do header `X-LZ-Admin` |
+
+Povoado por `seed.py`, que é **idempotente** e seguro para rodar a cada deploy:
+reexecutar nunca sobrescreve a senha de um admin existente. Um seed que resetasse
+senha traria a conta de volta ao padrão de fábrica em produção.
 
 ---
 
