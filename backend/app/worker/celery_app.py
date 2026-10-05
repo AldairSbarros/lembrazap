@@ -10,6 +10,7 @@ lembretes automáticos nunca disparavam.
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
@@ -33,5 +34,12 @@ celery_app.conf.beat_schedule = {
     "verificar-lembretes-a-cada-10-minutos": {
         "task": "verificar_e_disparar_lembretes",
         "schedule": 600.0,
+    },
+    # Reativação roda uma vez por dia, à meia-noite (horário do Celery, que
+    # respeita TIMEZONE). Janela curta de envio: quem ficou de fora espera o
+    # dia seguinte, o que dá tempo de o dono perceber antes do próximo disparo.
+    "reativar-clientes-inativos-diario": {
+        "task": "reativar_clientes_inativos",
+        "schedule": crontab(hour=0, minute=0),
     },
 }

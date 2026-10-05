@@ -59,18 +59,22 @@ curl http://localhost:8000/healthz       # {"status":"ok", ...}
 
 ---
 
-## Como funciona, em 6 passos
+## Como funciona, em 8 passos
 
 ```
-1. POST /api/contas          cria a conta e devolve o token (uma única vez)
-2. POST /api/conexao/criar   cria a instância na Evolution + registra o webhook
-3. GET  /api/conexao/qrcode  você escaneia e pareia o seu WhatsApp
-4. POST /api/configuracoes   antecedência do lembrete e texto da mensagem
-5. POST /api/agendamentos    marca um horário
-6. o worker manda            na janela de antecedência, e a resposta volta via webhook
+1. POST /api/contas            cria a conta e devolve o token (uma única vez)
+2. POST /api/conexao/criar     cria a instância na Evolution + registra o webhook
+3. GET  /api/conexao/qrcode    você escaneia e pareia o seu WhatsApp
+4. POST /api/clientes/importar importa a base de clientes do CSV da sua agenda
+                              (ou cadastra um a um pela tela do painel)
+5. POST /api/configuracoes     antecedência do lembrete + regras da reativação
+6. POST /api/agendamentos      marca um horário
+7. o worker manda              na janela de antecedência, e a resposta volta via webhook
+8. todo dia às 00h             quem está há mais de `dias_sem_visitar` dias sem
+                              visitar recebe a mensagem de reativação
 ```
 
-**Detalhe que costuma travar:** o passo 6 depende do webhook, que precisa de URL
+**Detalhe que costuma travar:** o passo 7 depende do webhook, que precisa de URL
 pública. Ver [docs/ERROS.md](docs/ERROS.md#o-webhook-não-chega).
 
 ---
@@ -119,7 +123,13 @@ lembrazap/
 ## Regras do produto
 
 - **Lembrete de agenda** — dispara `horas_antecedencia` antes do horário.
-- **Resposta automática** — `SIM` confirma; `ADIAR`/`REAGENDAR` marca para remarcar.
+- **Reativação de inativo** — uma vez por dia, quem está há mais de
+  `dias_sem_visitar` dias sem visita registrada recebe a mensagem de reativação,
+  com o nome do cliente e a contagem de dias no texto. Teto de `limite_por_dia`.
+- **Base de clientes própria** — a planilha entra por CSV ou cadastro manual; o
+  Postgres é a fonte da verdade. Não há conector para banco do cliente.
+- **Resposta automática** — `SIM` confirma e zera o contador de dias sem visita;
+  `ADIAR`/`REAGENDAR` marca para remarcar; `SAIR`/`PARAR` faz descadastro.
 - **Token de conta** — só o hash SHA-256 é guardado no banco; o token em si aparece
   uma única vez e não é recuperável.
 
@@ -130,11 +140,15 @@ lembrazap/
 Estão documentadas em detalhe em [docs/ERROS.md](docs/ERROS.md#limitações-conhecidas).
 As mais relevantes:
 
-- **Não há limite diário de envios nem intervalo entre mensagens.** O worker dispara
-  em rajada. Mandar campanha grande para número real **pode banir o número**.
-  Implemente o P1 de [docs/ARQUITETURA.md](docs/ARQUITETURA.md#pendências) antes.
-- **Não há opt-out.** Não existe palavra-chave de descadastro, e os templates não
-  trazem a instrução de resposta. Isso é exposição de LGPD e contra a política do WhatsApp.
+- **Há limite diário de envios**, configurável por negócio (`limite_por_dia`,
+  padrão 50). Cobre a reativação; o lembrete de agendamento continua sem teto,
+  porque é limitado pelo número de horários marcados. Campaign grande ainda pode
+  estourar a janela da Evolution.
+- **Há opt-out.** Responder `SAIR`, `PARAR` ou `NAO QUERO` marca o cliente, e ele
+  nunca mais recebe disparo automático — verificado no motor de reativação, no
+  lembrete de agendamento e na barreira final antes do envio. Dá para marcar
+  também pelo painel. Os templates ainda não trazem a instrução de resposta
+  (pendência 6).
 - **Não há tarefa que reprocesse a fila.** Se um envio falhar, o item fica
   `pendente` para sempre.
 - **`reagendando` é beco sem saída.** Depois de `ADIAR`, um `SIM` posterior não

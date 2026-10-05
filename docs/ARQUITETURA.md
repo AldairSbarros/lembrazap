@@ -103,10 +103,11 @@ Quatro tabelas. Chaves de 12 caracteres hex (`uuid4().hex[:12]`).
 | Coluna | Nota |
 |---|---|
 | `tenant_id` | FK `tenants.id`, `ON DELETE CASCADE` |
-| `telefone` | Indexado, mas **sem normalização** |
-| `ultima_visita`, `obs` | **Nunca lidos** (eram da campanha de reativação) |
-| `opt_out` | **Nunca checado** antes de enviar |
-| `respondeu_em`, `ultima_resposta` | Gravados pelo webhook |
+| `telefone` | Indexado, **normalizado** para dígitos com DDI (55 + DDD + 9) por `app/services/telefone.py`. É o que impede o mesmo contato entrar duas vezes |
+| `ultima_visita` | Alimenta o motor de reativação. Gravada ao confirmar (`SIM`) e em `POST /api/agendamentos/{id}/concluir` |
+| `obs` | Campo livre, exibido no painel |
+| `opt_out` | **Respeitado** em três camadas: filtro do motor de reativação, filtro do lembrete de agendamento e barreira final em `processar_item_fila`. Quem responde `SAIR`/`PARAR` nunca mais recebe |
+| `respondeu_em`, `ultima_resposta` | Gravados pelo webhook em qualquer resposta recebida |
 | `resposta_auto_enviada` | **Nunca usado** |
 
 ### `agenda`
@@ -210,11 +211,12 @@ Ordem sugerida, do mais urgente ao menos:
 | # | Pendência |
 |---|---|
 | 6 | Resposta automática ao `SIM` (os textos já existem em `schemas.py`, nunca usados) |
-| 7 | Campanha de reativação (`ultima_visita` já está no schema) |
-| 8 | CRUD de clientes + import CSV |
+| 7 | ~~Campanha de reativação~~ — feita: task `reativar_clientes_inativos`, diária |
+| 8 | ~~CRUD de clientes + import CSV~~ — feito: `api/clientes.py` e tela no painel |
 | 9 | Abordagem de `reagendando` (hoje é beco sem saída) |
 | 10 | Agendamento por IA (`origem` já existe) |
 | 11 | Log de envios (`GET /api/envios`) |
+| 12 | Prévia da campanha antes de disparar (`GET /api/reativacao/preview`) — hoje o dono liga a reativação às cegas |
 
 ### P2 — Correção
 

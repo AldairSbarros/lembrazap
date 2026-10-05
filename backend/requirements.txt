@@ -8,3 +8,6 @@ alembic
 celery
 redis
 requests
+# Obrigatorio para UploadFile/Form nas rotas de upload (importacao de CSV).
+# Sem isso o FastAPI levanta erro na importacao do modulo de rotas.
+python-multipart

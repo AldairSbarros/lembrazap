@@ -1,21 +1,19 @@
 from datetime import datetime, timedelta
+
 from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
 from app.db.models import Tenant, Agenda, FilaEnvio, Cliente
 from app.services import evolution
+from app.services.config_disparo import ler_regras
+from app.services.mensagem import (
+    _PADRAO_LEMBRETE,
+    _PADRAO_REATIVACAO,
+    formatar_mensagem,
+)
+from app.services.telefone import telefone_destino
 from app.worker.celery_app import celery_app
 
-def formatar_mensagem(template: str, nome: str, negocio: str, servico: str, quando: datetime) -> str:
-    """Substitui os placeholders dinâmicos pelo contexto real da marcação."""
-    texto = template or "Olá {nome}, lembramos do seu agendamento no {negocio} dia {data} às {horario}."
-    return texto.format(
-        nome=nome or "Cliente",
-        negocio=negocio or "nosso espaço",
-        servico=servico or "atendimento",
-        data=quando.strftime("%d/%m") if quando else "",
-        horario=quando.strftime("%H:%M") if quando else ""
-    )
 
 @celery_app.task(name="simular_envio_whatsapp")
 def simular_envio_whatsapp(tenant_id: str, telefone: str, mensagem: str):
@@ -23,76 +21,195 @@ def simular_envio_whatsapp(tenant_id: str, telefone: str, mensagem: str):
     print(f"[Worker] A simular envio para {telefone} (Tenant: {tenant_id}): {mensagem}")
     return {"status": "sucesso", "telefone": telefone}
 
+
 @celery_app.task(name="verificar_e_disparar_lembretes")
 def verificar_e_disparar_lembretes():
-    """Varre a agenda de todos os tenants e agenda os envios necessários."""
+    """Varre a agenda de todos os tenants e agenda os envios necessários.
+
+    Roda a cada 10 minutos. Dispara para agendamento ainda `agendado` cujo horário
+    cai na janela de antecedência configurada pelo dono.
+
+    O `try/except` fica **dentro** do laço de tenants de propósito: quando
+    envolvia o laço inteiro, um template inválido de um negócio impedia o
+    disparo de todos os outros.
+    """
     db: Session = SessionLocal()
     agora = datetime.utcnow()
-    
+
     try:
         tenants = db.query(Tenant).all()
         for tenant in tenants:
-            # 1. Obtém as configurações do negócio
-            config = tenant.config or {}
-            horas_antecedencia = int(config.get("horas_antecedencia", 24))
-            template = config.get("mensagem_modelo", "")
-            
-            # Janela de envio: agendamentos previstos para daqui a X horas (com tolerância de 30 min)
-            limite_inicio = agora + timedelta(hours=horas_antecedencia)
-            limite_fim = limite_inicio + timedelta(minutes=30)
-            
-            # 2. Localiza marcações pendentes dentro da janela
-            agendas_pendentes = db.query(Agenda).filter(
-                Agenda.tenant_id == tenant.id,
-                Agenda.status == "agendado",
-                Agenda.quando >= limite_inicio,
-                Agenda.quando <= limite_fim
-            ).all()
+            try:
+                regras = ler_regras(tenant.config)
 
-            for item in agendas_pendentes:
-                # 3. Monta o texto personalizado
-                texto_pronto = formatar_mensagem(
-                    template=template,
-                    nome=item.nome,
-                    negocio=tenant.negocio,
-                    servico=item.servico,
-                    quando=item.quando
-                )
+                if regras.envios_pausados:
+                    continue
 
-                # 4. Cria o item na fila de envio
-                fila = FilaEnvio(
-                    tenant_id=tenant.id,
-                    cliente_id=item.cliente_id,
-                    agenda_id=item.id,
-                    telefone=item.telefone,
-                    texto=texto_pronto,
-                    campanha="lembrete_remarcacao",
-                    status="pendente"
-                )
-                db.add(fila)
-                
-                # Marca como na_fila para não reenviar na próxima rodada
-                item.status = "na_fila"
-                db.commit()
+                # Janela de envio: agendamentos previstos para daqui a X horas,
+                # com 30 min de tolerância porque a task roda a cada 10 min.
+                limite_inicio = agora + timedelta(hours=regras.horas_antecedencia)
+                limite_fim = limite_inicio + timedelta(minutes=30)
 
-                # 5. Despacha a tarefa assíncrona de envio imediato
-                processar_item_fila.delay(fila.id)
-                
-    except Exception as exc:
-        print(f"[Worker] Erro ao verificar lembretes: {exc}")
-        db.rollback()
+                agendas_pendentes = db.query(Agenda).filter(
+                    Agenda.tenant_id == tenant.id,
+                    Agenda.status == "agendado",
+                    Agenda.quando >= limite_inicio,
+                    Agenda.quando <= limite_fim,
+                ).all()
+
+                for item in agendas_pendentes:
+                    texto = formatar_mensagem(
+                        template=regras.mensagem_lembrete,
+                        nome=item.nome,
+                        negocio=tenant.negocio,
+                        servico=item.servico,
+                        quando=item.quando,
+                        padrao=_PADRAO_LEMBRETE,
+                    )
+
+                    # Opt-out é lei: cliente que pediu para não receber não
+                    # recebe, mesmo com horário marcado.
+                    if item.cliente_id:
+                        cliente = db.query(Cliente).filter(Cliente.id == item.cliente_id).first()
+                        if cliente and cliente.opt_out:
+                            continue
+
+                    fila = FilaEnvio(
+                        tenant_id=tenant.id,
+                        cliente_id=item.cliente_id,
+                        agenda_id=item.id,
+                        telefone=telefone_destino(item.telefone),
+                        texto=texto,
+                        campanha="lembrete_agendamento",
+                        status="pendente",
+                    )
+                    db.add(fila)
+                    item.status = "na_fila"
+                    db.commit()
+
+                    processar_item_fila.delay(fila.id)
+
+            except Exception as exc:
+                db.rollback()
+                print(f"[Worker] Erro nos lembretes do tenant {tenant.id}: {exc}")
+
     finally:
         db.close()
 
+
+@celery_app.task(name="reativar_clientes_inativos")
+def reativar_clientes_inativos():
+    """Manda a mensagem de "sentimos sua falta" para quem está sumido.
+
+    Roda uma vez por dia. Para cada tenant com reativação ligada, seleciona os
+    clientes que não registrados visita há mais de `dias_sem_visitar` dias e
+    enfileira a mensagem de reativação.
+
+    Três exclusões, nesta ordem de importância:
+
+    1. `opt_out` — quem pediu para não receber não recebe. WhatsApp Business
+       bane número que insiste em mensagem para quem recusou.
+    2. Cliente sem histórico (`ultima_visita` vazio) — não há como saber há
+       quanto tempo não vem, então não é mensurável. Fica para o dono decidir,
+       e o painel mostra esse grupo separado.
+    3. `limite_por_dia` — teto por negócio, para não estourar a janela da
+       Evolution com um disparo de 800 mensagens de uma vez.
+    """
+    db: Session = SessionLocal()
+    agora = datetime.utcnow()
+    totais = {"enfileirados": 0, "ignorados_opt_out": 0, "ignorados_sem_historico": 0, "tenants": 0}
+
+    try:
+        tenants = db.query(Tenant).all()
+        for tenant in tenants:
+            try:
+                regras = ler_regras(tenant.config)
+
+                if not regras.reativacao_ativa or regras.envios_pausados:
+                    continue
+
+                if not tenant.instancia:
+                    continue
+
+                corte = agora - timedelta(days=regras.dias_sem_visitar)
+
+                candidatos = db.query(Cliente).filter(
+                    Cliente.tenant_id == tenant.id,
+                    Cliente.ultima_visita.isnot(None),
+                    Cliente.ultima_visita <= corte,
+                ).order_by(Cliente.ultima_visita.asc()).all()
+
+                enviados = 0
+
+                for cliente in candidatos:
+                    if enviados >= regras.limite_por_dia:
+                        break
+
+                    if cliente.opt_out:
+                        totais["ignorados_opt_out"] += 1
+                        continue
+
+                    # Não repetir para quem já recebeu esta campanha hoje.
+                    ja_enviado = db.query(FilaEnvio).filter(
+                        FilaEnvio.tenant_id == tenant.id,
+                        FilaEnvio.cliente_id == cliente.id,
+                        FilaEnvio.campanha == "reativacao",
+                        FilaEnvio.status == "enviado",
+                        FilaEnvio.criado_em >= agora - timedelta(hours=20),
+                    ).first()
+                    if ja_enviado:
+                        continue
+
+                    dias = (agora - cliente.ultima_visita).days
+
+                    texto = formatar_mensagem(
+                        template=regras.mensagem_reativacao,
+                        nome=cliente.nome,
+                        negocio=tenant.negocio,
+                        telefone=cliente.telefone,
+                        dias_sem_visita=dias,
+                        padrao=_PADRAO_REATIVACAO,
+                    )
+
+                    fila = FilaEnvio(
+                        tenant_id=tenant.id,
+                        cliente_id=cliente.id,
+                        telefone=telefone_destino(cliente.telefone),
+                        texto=texto,
+                        campanha="reativacao",
+                        status="pendente",
+                    )
+                    db.add(fila)
+                    enviados += 1
+
+                    db.commit()
+                    processar_item_fila.delay(fila.id)
+
+                totais["tenants"] += 1
+                totais["enfileirados"] += enviados
+                print(f"[Worker] Reativação tenant {tenant.id}: {enviados} enfileirado(s).")
+
+            except Exception as exc:
+                db.rollback()
+                print(f"[Worker] Erro na reativação do tenant {tenant.id}: {exc}")
+
+        print(f"[Worker] Reativação concluída: {totais}")
+
+    finally:
+        db.close()
+
+    return totais
+
+
 @celery_app.task(name="processar_item_fila")
 def processar_item_fila(fila_id: str):
-    """Executa a comunicação real com a Evolution API para disparar a mensagem."""
+    """Executa o envio real pela Evolution API."""
     db: Session = SessionLocal()
     try:
         fila = db.query(FilaEnvio).filter(FilaEnvio.id == fila_id).first()
         if not fila or fila.status != "pendente":
             return
-            
+
         tenant = db.query(Tenant).filter(Tenant.id == fila.tenant_id).first()
         if not tenant or not tenant.instancia:
             fila.status = "falha"
@@ -100,16 +217,23 @@ def processar_item_fila(fila_id: str):
             db.commit()
             return
 
-        # Envio real pela Evolution API. Sem o hasattr que existia antes: ele
-        # caía num print e marcava a fila como enviada sem nada ter saído.
+        # Última barreira do opt-out: mesmo que algo tenha enfileirado errado,
+        # o envio não sai para quem pediu para não receber.
+        if fila.cliente_id:
+            cliente = db.query(Cliente).filter(Cliente.id == fila.cliente_id).first()
+            if cliente and cliente.opt_out:
+                fila.status = "opt_out"
+                fila.erro = "Cliente pediu para não receber mensagens."
+                db.commit()
+                return
+
         try:
             resposta = evolution.enviar_texto(tenant.instancia, fila.telefone, fila.texto)
 
             fila.status = "enviado"
             fila.enviado_em = datetime.utcnow()
             fila.simulado = bool(resposta.get("simulado"))
-            
-            # Atualiza o agendamento de origem
+
             if fila.agenda_id:
                 agenda = db.query(Agenda).filter(Agenda.id == fila.agenda_id).first()
                 if agenda:
@@ -120,7 +244,7 @@ def processar_item_fila(fila_id: str):
             fila.status = "falha"
             fila.erro = str(e)
             db.commit()
-            
+
     except Exception as exc:
         db.rollback()
         print(f"[Worker] Falha ao processar envio: {exc}")

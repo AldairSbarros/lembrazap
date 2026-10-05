@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus } from 'lucide-react';
+import { Store, ArrowRight, QrCode, CheckCircle2, Loader2, Clock, Save, LogOut, Calendar, Plus, UserCheck } from 'lucide-react';
+import Clientes from './Clientes';
 
 const TEMPLATES_POR_NICHO = {
   barbearia: {
@@ -37,6 +38,14 @@ export default function App() {
   const [mensagemModelo, setMensagemModelo] = useState(TEMPLATES_POR_NICHO.barbearia.texto);
   const [salvoFeedback, setSalvoFeedback] = useState(false);
 
+  // Reativação de cliente inativo
+  const [diasSemVisitar, setDiasSemVisitar] = useState('45');
+  const [reativacaoAtiva, setReativacaoAtiva] = useState(false);
+  const [limitePorDia, setLimitePorDia] = useState('50');
+  const [mensagemReativacao, setMensagemReativacao] = useState('');
+  const [enviosPausados, setEnviosPausados] = useState(false);
+  const [avisosConfig, setAvisosConfig] = useState([]);
+
   // Gestão de Agendamentos
   const [agendamentos, setAgendamentos] = useState([]);
   const [novoCliente, setNovoCliente] = useState('');
@@ -58,12 +67,6 @@ export default function App() {
       console.error("Erro ao carregar agendamentos", e);
     }
   };
-
-  useEffect(() => {
-    if (etapa === 'dashboard' && tokenAuth) {
-      carregarAgendamentos(tokenAuth);
-    }
-  }, [etapa, tokenAuth]);
 
   const trocarNicho = (novoNicho) => {
     setNichoSelecionado(novoNicho);
@@ -113,26 +116,70 @@ export default function App() {
     }
   };
 
+  const carregarConfiguracoes = async (token) => {
+    try {
+      const res = await fetch('/api/configuracoes', { headers: { 'X-LZ-Token': token } });
+      if (!res.ok) return;
+      const d = await res.json();
+      setTempoAntecedencia(String(d.horas_antecedencia));
+      setDiasSemVisitar(String(d.dias_sem_visitar));
+      setReativacaoAtiva(d.reativacao_ativa);
+      setLimitePorDia(String(d.limite_por_dia));
+      setEnviosPausados(d.envios_pausados);
+      if (d.mensagem_lembrete) setMensagemModelo(d.mensagem_lembrete);
+      if (d.mensagem_reativacao) setMensagemReativacao(d.mensagem_reativacao);
+    } catch (e) {
+      console.error("Erro ao carregar configurações", e);
+    }
+  };
+
+  // Carrega os dados ao entrar no painel. Precisa ficar depois das funções que
+  // chama: um effect acima delas usaria uma variável ainda não inicializada.
+  // Buscar no effect é o padrão do React para dado de servidor — o setState
+  // acontece depois do await, nunca no corpo do effect.
+  useEffect(() => {
+    if (etapa !== 'dashboard' || !tokenAuth) return;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    carregarAgendamentos(tokenAuth);
+    carregarConfiguracoes(tokenAuth);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etapa, tokenAuth]);
+
+  // Depois das funções: o effect as usa, e declarar antes quebraria a ordem.
   const salvarConfiguracoes = async (e) => {
     e.preventDefault();
     setSalvoFeedback(false);
+    setAvisosConfig([]);
 
     try {
-      await fetch('/api/configuracoes', {
+      const res = await fetch('/api/configuracoes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-LZ-Token': tokenAuth
         },
         body: JSON.stringify({
-          horas_antecedencia: parseInt(tempoAntecedencia),
-          mensagem_modelo: mensagemModelo
+          horas_antecedencia: parseInt(tempoAntecedencia, 10) || 24,
+          mensagem_lembrete: mensagemModelo,
+          dias_sem_visitar: parseInt(diasSemVisitar, 10) || 45,
+          reativacao_ativa: reativacaoAtiva,
+          limite_por_dia: parseInt(limitePorDia, 10) || 50,
+          mensagem_reativacao: mensagemReativacao,
+          envios_pausados: enviosPausados
         })
       });
+
+      const dados = await res.json();
+      if (!res.ok) throw new Error(dados.detail || "Erro ao guardar configurações.");
+
+      // O backend devolve o que foi removido do texto: placeholder digitado
+      // errado é avisado aqui, não descoberto quando a mensagem chega.
+      setAvisosConfig(dados.avisos || []);
       setSalvoFeedback(true);
       setTimeout(() => setSalvoFeedback(false), 3000);
-    } catch {
-      setErro("Erro ao comunicar com o servidor para guardar configurações.");
+    } catch (err) {
+      setErro(err.message || "Erro ao comunicar com o servidor para guardar configurações.");
     }
   };
 
@@ -622,58 +669,147 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Base de Clientes */}
+                <Clientes token={tokenAuth} aoMudar={() => carregarAgendamentos(tokenAuth)} />
+
                 {/* Regras de Disparo Automático */}
+                <form onSubmit={salvarConfiguracoes}>
                 <div className="config-section">
                   <h2>
                     <Clock size={18} color="#10b981" />
                     Regras de Disparo Automático
                   </h2>
-                  <form onSubmit={salvarConfiguracoes}>
-                    <label className="lz-label">Tipo de Negócio (Tom de Voz)</label>
-                    <select
-                      value={nichoSelecionado}
-                      onChange={(e) => trocarNicho(e.target.value)}
-                      className="lz-select"
-                    >
-                      {Object.entries(TEMPLATES_POR_NICHO).map(([chave, item]) => (
-                        <option key={chave} value={chave}>{item.label}</option>
-                      ))}
-                    </select>
 
-                    <label className="lz-label">Antecedência do Lembrete (Horas antes)</label>
-                    <input
-                      type="number"
-                      value={tempoAntecedencia}
-                      onChange={(e) => setTempoAntecedencia(e.target.value)}
-                      className="lz-input"
-                    />
-
-                    <label className="lz-label">Modelo da Mensagem do WhatsApp</label>
-                    <textarea
-                      value={mensagemModelo}
-                      onChange={(e) => setMensagemModelo(e.target.value)}
-                      className="lz-textarea"
-                    />
-
-                    <div className="lz-tags-help">
-                      <span className="lz-tag-pill">{'{nome}'}</span>
-                      <span className="lz-tag-pill">{'{negocio}'}</span>
-                      <span className="lz-tag-pill">{'{servico}'}</span>
-                      <span className="lz-tag-pill">{'{data}'}</span>
-                      <span className="lz-tag-pill">{'{horario}'}</span>
+                  {enviosPausados && (
+                    <div className="lz-alert-aviso">
+                      Envios automáticos estão <strong>pausados</strong>. Nenhuma mensagem vai sair até
+                      você desmarcar abaixo.
                     </div>
+                  )}
 
-                    {salvoFeedback && (
-                      <div style={{ color: '#34d399', fontSize: '13px', marginBottom: '16px', fontWeight: 600 }}>
-                        ✓ Configurações guardadas e sincronizadas!
-                      </div>
-                    )}
+                  <label className="lz-label lz-label-toggle">
+                    <input
+                      type="checkbox"
+                      checked={enviosPausados}
+                      onChange={(e) => setEnviosPausados(e.target.checked)}
+                    />
+                    Pausar todos os envios automáticos
+                  </label>
 
-                    <button type="submit" className="lz-btn">
-                      <Save size={18} /> Guardar Alterações
-                    </button>
-                  </form>
+                  <h3 className="lz-subtitulo">
+                    <Clock size={15} /> Campanha 1 — Lembrete de consulta marcada
+                  </h3>
+
+                  <label className="lz-label">Tipo de Negócio (Tom de Voz)</label>
+                  <select
+                    value={nichoSelecionado}
+                    onChange={(e) => trocarNicho(e.target.value)}
+                    className="lz-select"
+                  >
+                    {Object.entries(TEMPLATES_POR_NICHO).map(([chave, item]) => (
+                      <option key={chave} value={chave}>{item.label}</option>
+                    ))}
+                  </select>
+
+                  <label className="lz-label">Avisar quantas horas antes</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="720"
+                    value={tempoAntecedencia}
+                    onChange={(e) => setTempoAntecedencia(e.target.value)}
+                    className="lz-input"
+                  />
+
+                  <label className="lz-label">Texto do lembrete</label>
+                  <textarea
+                    value={mensagemModelo}
+                    onChange={(e) => setMensagemModelo(e.target.value)}
+                    className="lz-textarea"
+                  />
+
+                  <div className="lz-tags-help">
+                    <span className="lz-tag-pill">{'{nome}'}</span>
+                    <span className="lz-tag-pill">{'{negocio}'}</span>
+                    <span className="lz-tag-pill">{'{servico}'}</span>
+                    <span className="lz-tag-pill">{'{data}'}</span>
+                    <span className="lz-tag-pill">{'{horario}'}</span>
+                  </div>
+
+                  <h3 className="lz-subtitulo">
+                    <UserCheck size={15} /> Campanha 2 — Reativação de cliente sumido
+                  </h3>
+
+                  <label className="lz-label lz-label-toggle">
+                    <input
+                      type="checkbox"
+                      checked={reativacaoAtiva}
+                      onChange={(e) => setReativacaoAtiva(e.target.checked)}
+                    />
+                    Ligar a reativação de clientes que não vêm há um tempo
+                  </label>
+
+                  <div className="form-grid-2">
+                    <div>
+                      <label className="lz-label">Dias sem visitar para receber</label>
+                      <input
+                        type="number"
+                        min="7"
+                        max="365"
+                        value={diasSemVisitar}
+                        onChange={(e) => setDiasSemVisitar(e.target.value)}
+                        className="lz-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="lz-label">Máximo por dia</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={limitePorDia}
+                        onChange={(e) => setLimitePorDia(e.target.value)}
+                        className="lz-input"
+                      />
+                    </div>
+                  </div>
+
+                  <label className="lz-label">
+                    Texto da reativação — este é o que vai com o nome do cliente
+                  </label>
+                  <textarea
+                    value={mensagemReativacao}
+                    placeholder="Deixe vazio para usar o texto padrão. Ex.: Fala {nome}, faz {dias} dias que não te vemos na {negocio}! Passa aqui."
+                    onChange={(e) => setMensagemReativacao(e.target.value)}
+                    className="lz-textarea"
+                  />
+
+                  <div className="lz-tags-help">
+                    <span className="lz-tag-pill">{'{nome}'}</span>
+                    <span className="lz-tag-pill">{'{dias}'}</span>
+                    <span className="lz-tag-pill">{'{negocio}'}</span>
+                    <span className="lz-tag-pill">{'{telefone}'}</span>
+                  </div>
+
+                  {avisosConfig.length > 0 && (
+                    <div className="lz-alert-aviso">
+                      <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                        {avisosConfig.map((a, i) => <li key={i}>{a}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {salvoFeedback && (
+                    <div style={{ color: '#34d399', fontSize: '13px', marginBottom: '16px', fontWeight: 600 }}>
+                      ✓ Configurações guardadas e sincronizadas!
+                    </div>
+                  )}
+
+                  <button type="submit" className="lz-btn">
+                    <Save size={18} /> Guardar Alterações
+                  </button>
                 </div>
+                </form>
 
                 <button onClick={() => setEtapa('registro')} className="lz-btn" style={{ background: '#334155', color: '#f8fafc' }}>
                   <LogOut size={18} /> Desconectar / Alterar Negócio

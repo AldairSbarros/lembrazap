@@ -340,19 +340,189 @@ curl -X POST "http://localhost:8000/api/teste-fila?telefone=5592992030250&mensag
 
 ---
 
+## Clientes
+
+Base de clientes do negócio. Toda query filtra por `tenant_id`: um negócio nunca
+enxerga a base de outro, mesmo com token válido.
+
+### `GET /api/clientes`
+
+Lista a base. Query params:
+
+| Param | Padrão | O que faz |
+|---|---|---|
+| `busca` | `""` | Filtra por nome (parcial, case-insensitive) ou por telefone. Com dígitos, casa o sufixo — `999998888` acha `5511999998888` |
+| `inativos` | `false` | Só quem está a **mais dias** sem visitar que o configurado |
+| `sem_historico` | `false` | Só quem nunca teve visita registrada |
+| `limite` | `200` | Máximo de itens (1–1000) |
+
+Resposta:
+
+```json
+{
+  "total": 5,
+  "dias_sem_visitar": 45,
+  "reativacao_ativa": true,
+  "clientes": [
+    {
+      "id": "02f613714d7f",
+      "nome": "Carlos Silva",
+      "telefone": "5511999998888",
+      "telefone_formatado": "(11) 99999-8888",
+      "ultima_visita": "2026-09-01 00:00",
+      "dias_sem_visitar": 34,
+      "obs": "Prefere de manhã",
+      "opt_out": false,
+      "ultima_resposta": "SIM",
+      "respondeu_em": "2026-09-01 18:22",
+      "inativo": false,
+      "sem_historico": false
+    }
+  ]
+}
+```
+
+`sem_historico` é separado de `inativo` de propósito: quem nunca registrou
+visita é o caso ambíguo — nunca voltou, ou veio da planilha e ninguém
+atualizou. O que fazer com eles é decisão do dono.
+
+### `POST /api/clientes`
+
+```json
+{ "nome": "Carlos Silva", "telefone": "(11) 99999-8888", "ultima_visita": "2026-09-01T14:30:00", "obs": "" }
+```
+
+O telefone é normalizado para dígitos com DDI (`5511999998888`). `+55`,
+`(11)`, espaços e `-` são aceitos; **fixo de 8 dígitos é recusado** com 422
+porque WhatsApp no Brasil é só celular — aceitar faria o contato passar pela
+importação e falhar só no envio.
+
+Se já existir cliente com o mesmo telefone nesta conta, **atualiza** em vez de
+duplicar e devolve `"atualizado": true`.
+
+### `PUT /api/clientes/{id}`
+
+Atualização parcial; campos omitidos ficam como estão. Aceita `nome`,
+`telefone`, `ultima_visita`, `obs` e `opt_out`. É esta rota que o painel usa
+para registrar visita e para reativar manualmente quem pediu para não receber.
+Trocar o telefone para um já usado nesta conta devolve 409.
+
+### `DELETE /api/clientes/{id}`
+
+Remove o cliente. Os agendamentos antigos são mantidos (`cliente_id` fica nulo):
+excluir um cliente não deve apagar o histórico de visitas que aconteceram.
+
+### `POST /api/clientes/opt-out`
+
+Marca um telefone como não querendo receber. Chamado pelo webhook quando o
+cliente responde `SAIR`/`PARAR`, e pelo painel quando o pedido chega pelo
+telefone.
+
+```json
+{ "telefone": "(11) 99999-8888" }
+```
+
+### `POST /api/clientes/importar`
+
+`multipart/form-data` com o campo `arquivo`. Query param `atualizar_existentes`
+(padrão `true`).
+
+O separador é detectado automaticamente entre `,`, `;` e tabulação — planilha
+brasileira exporta com `;`, e assumir `,` importaria um arquivo de uma coluna
+só.
+
+| Campo | Cabeçalhos aceitos |
+|---|---|
+| nome | `nome`, `cliente`, `nome do cliente`, `nome completo`, `name` |
+| telefone | `telefone`, `celular`, `whatsapp`, `fone`, `contato`, `numero`, `tel` |
+| última visita | `ultima visita`, `ultimo atendimento`, `data`, `visita` |
+| observação | `obs`, `observacao`, `nota`, `anotacao` |
+
+Datas aceitas: ISO (`2026-07-20T10:30:00`), `dd/mm/aaaa`, `dd/mm/aa`,
+`dd-mm-aaaa`, `aaaa-mm-dd`. `nunca` e vazio significam "sem histórico". O que
+não dá para interpretar fica sem histórico, em vez de virar data errada — data
+errada decide quem entra na campanha de reativação.
+
+Resposta:
+
+```json
+{
+  "ok": true,
+  "criados": 5,
+  "atualizados": 2,
+  "ignorados": 1,
+  "duplicados_no_arquivo": 1,
+  "colunas_reconhecidas": ["nome", "obs", "telefone", "ultima_visita"],
+  "problemas": ["Carla Dias: telefone '21 3333-4444' inválido"],
+  "mensagem": "5 cliente(s) importado(s), 2 atualizado(s), 1 ignorado(s). 1 telefone(s) repetido(s) foram unidos."
+}
+```
+
+Telefone repetido **dentro do próprio arquivo** vira um registro só, preferring
+a linha que traz o nome e a data mais recente. Planilha de histórico repete o
+contato com frequência, e nem sempre a linha boa vem primeiro.
+
+A importação nunca falha inteira por causa de uma linha suja: o que não entra
+aparece em `ignorados` e `problemas`.
+
+### `POST /api/agendamentos/{id}/concluir`
+
+Marca a visita como realizada e zera o contador de dias sem visita. Devolve
+`cliente_registrado` indicando se havia cliente vinculado.
+
+O `SIM` no WhatsApp confirma que o cliente *vai* vir; concluir confirma que ele
+*veio*. Só o segundo deve zerar o contador.
+
+---
+
+## Regras de disparo
+
+### `GET /api/configuracoes`
+
+Lê as regras da conta com os defaults já aplicados, mais a lista de
+placeholders válidos. Existia só o `POST`: o painel não conseguia reidratar o
+formulário e perdia o que o dono tinha digitado ao recarregar.
+
+```json
+{
+  "horas_antecedencia": 24,
+  "mensagem_lembrete": "Fala {nome}, seu horário na {negocio} é {data} às {horario}.",
+  "dias_sem_visitar": 45,
+  "reativacao_ativa": true,
+  "limite_por_dia": 50,
+  "mensagem_reativacao": "Fala {nome}, faz {dias} dias que não te vemos!",
+  "envios_pausados": false,
+  "placeholders": ["nome", "negocio", "servico", "data", "horario", "telefone", "dias"]
+}
+```
+
+### `POST /api/configuracoes`
+
+Grava as regras. Todos os campos têm default, então dá para mandar só o que
+muda.
+
+| Campo | Faixa | Default | Efeito |
+|---|---|---|---|
+| `horas_antecedencia` | 1–720 | 24 | Avisar quantas horas antes da consulta |
+| `dias_sem_visitar` | 7–365 | 45 | Quando o cliente entra na reativação |
+| `reativacao_ativa` | bool | `false` | Liga o disparo diário dos sumidos |
+| `limite_por_dia` | 1–500 | 50 | Teto por negócio, para não estourar a janela da Evolution |
+| `envios_pausados` | bool | `false` | Pausa tudo sem perder a fila |
+
+Devolve `avisos` com o que foi removido do texto — um `{cliente}` digitado no
+lugar de `{nome}` é avisado na hora de salvar, em vez de a mensagem chegar sem
+o nome do cliente.
+
+---
+
 ## Não documentado (não existe)
 
-Estas rotas são referenciadas em versões anteriores e **não estão implementadas**.
-Se precisar, precisam ser criadas:
+Estas rotas são referenciadas em versões anteriores e **não estão implementadas**:
 
 | Rota prevista | Para quê |
 |---|---|
 | `GET /api/conexao/status` | Estado real da instância. Hoje o painel mostra "Conectado" fixo |
-| `GET`/`PUT /api/configuracoes` | Ler a configuração salva |
-| `GET/POST /api/clientes` | CRUD de clientes |
-| `POST /api/clientes/importar` | Importar CSV da agenda |
-| `POST /api/clientes/{id}/optout` | Descadastro manual |
-| `GET /api/reativacao/preview` | Prévia da campanha de inativos |
-| `POST /api/reativacao/disparar` | Disparar campanha de reativação |
+| `GET /api/reativacao/preview` | Prévia da campanha de inativos antes de disparar |
+| `POST /api/reativacao/disparar` | Disparo manual, fora do horário do beat |
 | `GET /api/envios` | Log de mensagens enviadas |
 | `DELETE /api/agendamentos/{id}` | Cancelar um horário |

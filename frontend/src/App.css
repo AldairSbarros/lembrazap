@@ -190,3 +190,489 @@ body {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* ==========================================================================
+   PAINEL (dashboard, base de clientes, regras de disparo)
+
+   O card do QR Code é estreito (440px), mas o painel precisa de espaço para
+   tabela e formulário. O `.lz-card` continua servindo o cadastro; a partir do
+   dashboard o `body` alarga.
+   ========================================================================== */
+
+.lz-body:has(.dash-grid) {
+  max-width: 960px;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.dash-card h3 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+
+.dash-card .value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.1;
+}
+
+.config-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.config-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 20px;
+}
+
+/* Rótulo de cada campanha dentro das regras de disparo */
+.lz-subtitulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #059669;
+  margin: 26px 0 14px;
+  padding-top: 18px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.lz-subtitulo:first-of-type {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.lz-label-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  cursor: pointer;
+}
+
+.lz-label-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #059669;
+  cursor: pointer;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .form-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lz-textarea {
+  width: 100%;
+  min-height: 110px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #1e293b;
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+}
+
+.lz-textarea:focus {
+  border-color: #059669;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+  background: #ffffff;
+}
+
+.lz-select {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #1e293b;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  margin-bottom: 24px;
+}
+
+.lz-select:focus {
+  border-color: #059669;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+}
+
+/* Placeholders clicáveis: mostra o que dá para usar na mensagem */
+.lz-tags-help {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.lz-tag-pill {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  border: 1px solid #a7f3d0;
+}
+
+/* Botão secundário: mesma forma, sem o peso do botão principal */
+.lz-btn-secundario {
+  width: auto;
+  background: #ffffff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  box-shadow: none;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+.lz-btn-secundario:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  transform: none;
+}
+
+.lz-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.lz-form-acoes {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.lz-form-acoes .lz-btn {
+  width: auto;
+  min-width: 140px;
+}
+
+/* Avisos: erro, sucesso e atenção usam a mesma base */
+.lz-alert-erro,
+.lz-alert-ok,
+.lz-alert-aviso {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.lz-alert-erro {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.lz-alert-ok {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.lz-alert-aviso {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  display: block;
+}
+
+.lz-alert-x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  display: flex;
+  padding: 0;
+}
+
+/* Importação de planilha */
+.lz-import-box {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.lz-import-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lz-import-dica {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+  margin-top: 12px;
+}
+
+.lz-import-dica code {
+  background: #e2e8f0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.lz-import-resultado {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.lz-import-resultado ul {
+  margin: 8px 0 8px 18px;
+  color: #b45309;
+}
+
+.lz-link {
+  background: none;
+  border: none;
+  color: #059669;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* Busca e filtros */
+.lz-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.lz-busca {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 220px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  color: #64748b;
+}
+
+.lz-busca input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 14px;
+  color: #1e293b;
+  font-family: inherit;
+}
+
+.lz-chip {
+  padding: 8px 14px;
+  border-radius: 9999px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.lz-chip:hover {
+  border-color: #059669;
+  color: #059669;
+}
+
+.lz-chip.ativo {
+  background: #059669;
+  border-color: #059669;
+  color: #ffffff;
+}
+
+.lz-form-cliente {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.lz-vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+  padding: 40px 20px;
+  background: #f8fafc;
+  border-radius: 16px;
+  border: 1px dashed #cbd5e1;
+}
+
+.lz-vazio p {
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+/* Tabela */
+.lz-table-container {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+}
+
+.lz-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.lz-table thead {
+  background: #f8fafc;
+}
+
+.lz-table th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.lz-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: top;
+}
+
+.lz-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.lz-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.lz-sub {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* Situação do cliente */
+.lz-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.lz-badge-ativo {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.lz-badge-inativo {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.lz-badge-optout {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+/* Ações da linha da tabela */
+.lz-acao {
+  background: none;
+  border: 1px solid transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: inline-flex;
+  transition: all 0.15s;
+}
+
+.lz-acao:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #e2e8f0;
+}
+
+.lz-acao-perigo:hover {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
