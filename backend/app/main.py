@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.admin import router as admin_router
+from app.api.assinatura import router as assinatura_router
 from app.api.clientes import router as clientes_router
 from app.db.database import get_db
 from app.db.models import Tenant, Agenda, Cliente
 from app.schemas import ContaReq, ContaResp
-from app.api.deps import obter_tenant_atual, hash_token
+from app.api.deps import exigir_acesso_ativo, obter_tenant_atual, hash_token
 from app.services import evolution
 from app.services.config_disparo import (
     DIAS_MAXIMO,
@@ -76,13 +78,18 @@ app = FastAPI(
         {"name": "WhatsApp", "description": "Instância Evolution API, QR Code e webhook."},
         {"name": "Agendamentos", "description": "Compromissos e seus status."},
         {"name": "Clientes", "description": "Base de clientes: cadastro, edição, importação e histórico de visitas."},
+        {"name": "Assinatura", "description": "Planos, limites de consumo, checkout e histórico de cobrança da conta."},
+        {"name": "Administração", "description": "Painel do proprietário: contas, cobrança, suspensão e métricas. Exige `X-LZ-Admin`."},
         {"name": "Configurações", "description": "Regras de disparo e modelos de mensagem."},
         {"name": "Diagnóstico", "description": "Healthcheck e testes de fila."},
     ],
 )
 
-# Rotas de clientes, separadas em api/clientes.py
+# Rotas separadas em módulos próprios: a base de clientes é a parte com mais rotas, e
+# a parte administrativa precisa ficar longe do fluxo do assinante.
 app.include_router(clientes_router)
+app.include_router(assinatura_router)
+app.include_router(admin_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -246,7 +253,11 @@ def dados_conta(tenant: Tenant = Depends(obter_tenant_atual)):
     summary="Enfileira uma mensagem de teste (não envia nada)",
     responses=ERRO_TOKEN,
 )
-def teste_fila(telefone: str, mensagem: str, tenant: Tenant = Depends(obter_tenant_atual)):
+def teste_fila(
+    telefone: str,
+    mensagem: str,
+    tenant: Tenant = Depends(exigir_acesso_ativo),
+):
     """Enfileira a task `simular_envio_whatsapp`, que apenas escreve no log.
 
     Não há envio real aqui — serve para confirmar que o Redis e o worker estão
@@ -564,7 +575,7 @@ def listar_agendamentos(
 )
 def criar_agendamento(
     body: NovoAgendamentoRequest,
-    tenant: Tenant = Depends(obter_tenant_atual),
+    tenant: Tenant = Depends(exigir_acesso_ativo),
     db: Session = Depends(get_db)
 ):
     """Regista uma nova marcação vinculada ao tenant.
@@ -573,6 +584,9 @@ def criar_agendamento(
     O telefone é normalizado antes da comparação: `11999998888` e
     `(11) 99999-8888` são o mesmo contato, e sem normalizar o cliente entraria
     duas vezes na base.
+
+    É a rota que efetivamente consome disparo, então exige assinatura ativa: conta
+    suspensa continua lendo a agenda, mas não marca nada novo.
     """
     telefone = normalizar_telefone(body.telefone) or body.telefone.strip()
 

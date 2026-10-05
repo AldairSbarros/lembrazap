@@ -14,6 +14,7 @@ resposta (`SIM` confirma, `ADIAR` entra em remarcação).
 | Documento | Para quê |
 |---|---|
 | [docs/MANUAL-USUARIO.md](docs/MANUAL-USUARIO.md) | **Comece aqui se você é o dono do negócio.** Passo a passo sem código. |
+| [docs/PAINEL-ADMIN.md](docs/PAINEL-ADMIN.md) | **Se você opera o SaaS.** Contas, cobrança, suspensão e Stripe. |
 | [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalar, rodar local e publicar na VPS. |
 | [docs/API.md](docs/API.md) | Referência de todas as rotas, com exemplos de `curl`. |
 | [docs/ERROS.md](docs/ERROS.md) | Diagnóstico: sintomas, causas e soluções. |
@@ -128,6 +129,12 @@ lembrazap/
   com o nome do cliente e a contagem de dias no texto. Teto de `limite_por_dia`.
 - **Base de clientes própria** — a planilha entra por CSV ou cadastro manual; o
   Postgres é a fonte da verdade. Não há conector para banco do cliente.
+- **Assinatura e cobrança** — três planos (Starter/Pro/Business) com limite de
+  clientes e de mensagens. O bloqueio por assinatura vencida é verificado na API, no
+  enfileiramento e no envio. Integração com Stripe para cobrança automática por
+  cartão; sem as chaves do Stripe o sistema funciona por cobrança manual.
+- **Painel do proprietário** em `/admin`, com header de sessão separado do
+  assinante. Ver [docs/PAINEL-ADMIN.md](docs/PAINEL-ADMIN.md).
 - **Resposta automática** — `SIM` confirma e zera o contador de dias sem visita;
   `ADIAR`/`REAGENDAR` marca para remarcar; `SAIR`/`PARAR` faz descadastro.
 - **Token de conta** — só o hash SHA-256 é guardado no banco; o token em si aparece

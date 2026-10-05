@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import obter_tenant_atual
+from app.api.deps import exigir_acesso_ativo, obter_tenant_atual
 from app.db.database import get_db
 from app.db.models import Cliente, Tenant
 from app.services.config_disparo import ler_regras
@@ -414,7 +414,7 @@ async def importar_clientes(
         description="Se marcado, atualiza nome/observação/histórico dos que já existem.",
     ),
     db: Session = Depends(get_db),
-    tenant: Tenant = Depends(obter_tenant_atual),
+    tenant: Tenant = Depends(exigir_acesso_ativo),
 ):
     """Importa a base de clientes de um CSV exportado da agenda do negócio.
 
@@ -436,7 +436,27 @@ async def importar_clientes(
     Telefone repetido dentro do próprio arquivo é unido em um registro só
     (`duplicados_no_arquivo`), preferindo a linha que traz o nome e a data mais
     recente. Planilha de histórico costuma repetir o contato.
+
+    ### Limite do plano
+
+    O teto de clientes do plano é conferido **antes** de gravar: o que passar do
+    limite é ignorado e devolvido em `excedente_limite`, em vez de estourar o plano
+    pela metade e deixar o cliente discoverto no meio do arquivo.
     """
+    from app.config.planos import limite_clientes
+
+    teto = limite_clientes(tenant.plano)
+    ja_cadastrados = db.query(Cliente).filter(Cliente.tenant_id == tenant.id).count()
+
+    if ja_cadastrados >= teto:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Seu plano {tenant.plano} comporta {teto} clientes e você já tem "
+                f"{ja_cadastrados}. Faça upgrade para continuar importando."
+            ),
+        )
+
     bruto = (await arquivo.read() or b"").decode("utf-8-sig", errors="replace")
 
     if not bruto.strip():
@@ -464,6 +484,7 @@ async def importar_clientes(
         )
 
     criados = atualizados = ignorados = duplicados_no_arquivo = 0
+    excedente = 0
     problemas: list[str] = []
 
     # Planilha real repete o mesmo telefone em linhas diferentes — e nem sempre a
@@ -529,6 +550,13 @@ async def importar_clientes(
                 else:
                     ignorados += 1
             else:
+                # O teto é conferido só aqui, no caminho de criação. Atualizar quem já
+                # existe não gasta cota, então barrar isso junto com a criação
+                # deixaria o cliente sem poder corrigir um nome errado.
+                if criados + ja_cadastrados >= teto:
+                    excedente += 1
+                    continue
+
                 db.add(
                     Cliente(
                         tenant_id=tenant.id,
@@ -547,12 +575,20 @@ async def importar_clientes(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Erro ao gravar a importação: {exc}")
 
+    if excedente:
+        problemas.append(
+            f"{excedente} linha(s) ficaram de fora: o plano {tenant.plano} comporta "
+            f"{teto} clientes no total."
+        )
+
     return {
         "ok": True,
         "criados": criados,
         "atualizados": atualizados,
         "ignorados": ignorados,
         "duplicados_no_arquivo": duplicados_no_arquivo,
+        "excedente_limite": excedente,
+        "limite_clientes": teto,
         "colunas_reconhecidas": sorted(mapa.keys()),
         "problemas": problemas,
         "mensagem": (
@@ -561,6 +597,12 @@ async def importar_clientes(
             + (
                 f" {duplicados_no_arquivo} telefone(s) repetido(s) foram unidos."
                 if duplicados_no_arquivo
+                else ""
+            )
+            + (
+                f" {excedente} linha(s) barrada(s) pelo limite do plano "
+                f"{teto} clientes."
+                if excedente
                 else ""
             )
         ),

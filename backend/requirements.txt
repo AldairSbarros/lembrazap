@@ -11,3 +11,7 @@ requests
 # Obrigatorio para UploadFile/Form nas rotas de upload (importacao de CSV).
 # Sem isso o FastAPI levanta erro na importacao do modulo de rotas.
 python-multipart
+# Integracao de assinatura recorrente com o Stripe.
+# O codigo importa este pacote de forma tardia e so quando ha STRIPE_SECRET_KEY
+# configurada, entao a API e o worker sobem sem ele em ambiente de teste.
+stripe

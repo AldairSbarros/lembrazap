@@ -10,7 +10,9 @@ export default defineConfig(({ mode }) => {
   //
   // A porta 8002 é a mesma do compose: o host 8000 já é do aletheia_backend na
   // VPS de produção. VITE_API_TARGET sobrescreve para outro ambiente.
-  const env = loadEnv(mode, process.cwd(), '')
+  // '.' em vez de process.cwd(): o config é ESM e `process` não existe lá.
+  // O Vite resolve o caminho contra o diretório de trabalho de qualquer forma.
+  const env = loadEnv(mode, '.', '')
   const alvo = env.VITE_API_TARGET || 'http://localhost:8002'
 
   return {

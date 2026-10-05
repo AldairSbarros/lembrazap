@@ -18,8 +18,9 @@ Todas as rotas `/api/*` exigem o header:
 X-LZ-Token: <token da conta>
 ```
 
-Exceções: `POST /api/contas` (cria a conta) e `POST /api/webhook/whatsapp`
-(chamada pela Evolution).
+Exceções: `POST /api/contas` (cria a conta), `POST /api/webhook/whatsapp`
+(chamada pela Evolution), `GET /api/assinatura/planos` (vitrine de preços) e
+`POST /api/admin/stripe/webhook` (autenticado por assinatura criptográfica).
 
 O token é gerado em `POST /api/contas`, mostrado **uma única vez** e nunca mais
 recuperável — o banco guarda só o hash SHA-256. Sem header ou com token errado:
@@ -27,6 +28,39 @@ recuperável — o banco guarda só o hash SHA-256. Sem header ou com token erra
 ```json
 { "detail": "Informe o header X-LZ-Token." }
 ```
+
+### Duas sessões, dois headers
+
+| Sessão | Header | Alcance |
+|---|---|---|
+| Assinante | `X-LZ-Token` | Suas contas, clientes e agendamentos |
+| Proprietário | `X-LZ-Admin` | `/api/admin/*` — todas as contas e a cobrança |
+
+O token do proprietário é criado por `python criar_admin.py` e fica em outra chave
+do `localStorage`. **Um token de assinante não abre o painel administrativo** — os
+headers são independentes e o admin não é um tenant.
+
+### Conta bloqueada
+
+Assinatura suspensa, inadimplente ou com teste vencido devolve **402** nas rotas que
+geram disparo (`POST /api/agendamentos`, `POST /api/teste-fila`,
+`POST /api/clientes/importar`):
+
+```json
+{
+  "detail": {
+    "erro": "assinatura_inativa",
+    "mensagem": "Sua conta está suspensa. Fale com o suporte para reativar.",
+    "status": "suspenso",
+    "plano": "pro",
+    "renovacao_em": null
+  }
+}
+```
+
+A conta continua **lendo** tudo o que é dela e entrando no painel: o bloqueio é de
+envio, não de acesso. O `402` em vez de `403` existe para o frontend abrir a tela de
+assinatura vencida em vez de mostrar um erro genérico.
 
 ```json
 { "detail": "Token de conta inválido." }
@@ -515,6 +549,150 @@ o nome do cliente.
 
 ---
 
+## Administração
+
+Painel do **proprietário do sistema**, para quem opera o SaaS. Todas as rotas usam o
+header `X-LZ-Admin` — separado do `X-LZ-Token`, então um token de assinante nunca
+abre o painel administrativo.
+
+O admin **não é um tenant**: não tem base de clientes, não recebe disparo e nunca
+aparece no painel do assinante.
+
+### `POST /api/admin/login`
+
+```json
+{ "email": "admin@lembrazap.com.br", "senha": "..." }
+```
+
+Devolve `{ "token": "...", "nome": "...", "email": "..." }`. E-mail inexistente e
+senha errada devolvem **a mesma mensagem**, para não permitir enumerar contas.
+
+### `GET /api/admin/metricas`
+
+Totais do sistema: contas, contas com acesso, receita do mês em centavos, mensagens
+do mês, distribuição por status e se o Stripe está configurado.
+
+### `GET /api/admin/contas`
+
+Lista todas as contas com métricas por conta: `clientes_total`, `clientes_ativos`
+(visitou nos últimos 90 dias), `agendamentos_hoje`, `mensagens_mes`, `falhas_mes`.
+
+Filtros: `busca` (nome, negócio ou e-mail, sem acento e sem caixa) e `status`.
+
+### `POST /api/admin/contas`
+
+Cria conta manualmente e devolve o **token em claro, uma única vez**. Para venda com
+pagamento, prefira o checkout do Stripe — ele já ativa o acesso sozinho.
+
+| Campo | Padrão | Efeito |
+|---|---|---|
+| `nome` | — | Nome do responsável |
+| `negocio` | `nome` | Nome do negócio |
+| `email_contato` | `""` | Salvo em `config`, aparece só no admin |
+| `plano` | `starter` | Define os limites |
+| `dias_teste` | `14` | `0` já entra como inadimplente |
+| `criar_instancia` | `true` | Cria a instância na Evolution |
+
+### `PATCH /api/admin/contas/{id}`
+
+Edita `nome`, `negocio`, `email_contato` e `plano`. **Não** muda status — para isso
+existem as rotas de suspensão, que registram a decisão.
+
+### `POST /api/admin/contas/{id}/suspender`
+
+```json
+{ "motivo": "não pagou" }
+```
+
+Corta o envio **imediatamente** e **esvazia a fila pendente**: sem isso, um lembrete
+enfileirado antes da suspensão ainda sairia depois dela. Devolve quantos itens foram
+descartados.
+
+### `POST /api/admin/contas/{id}/reativar`
+
+```json
+{ "dias": 30 }
+```
+
+Volta o acesso. `dias: 0` libera sem data de expiração. Registra o movimento como
+pagamento do tipo `manual`.
+
+### `POST /api/admin/contas/{id}/token`
+
+Invalida o token anterior de imediato. É a ação de suporte para token vazado.
+
+### `GET /api/admin/contas/{id}/clientes`
+
+Base de clientes da conta, com telefone **mascarado** (`***0250`). Serve para
+resolver problema em suporte, não para exportar contatos.
+
+### `GET /api/admin/contas/{id}`
+
+Detalhe de uma conta: métricas, motivo e data da suspensão, id da instância, ids do
+Stripe e os últimos 50 pagamentos.
+
+### `POST /api/admin/trocar-senha`
+
+Exige a senha atual. Se o token vazar, o atacante não troca a senha.
+
+### `POST /api/admin/stripe/webhook`
+
+Única rota **sem** `X-LZ-Admin`: autentica pela assinatura `Stripe-Signature`.
+
+Eventos tratados:
+
+| Evento | Efeito |
+|---|---|
+| `checkout.session.completed` | Ativa a conta e grava o pagamento |
+| `invoice.paid` | Renova e estende a validade |
+| `invoice.payment_failed` | Marca inadimplente e corta o acesso |
+| `customer.subscription.updated` | Sincroniza status e período |
+| `customer.subscription.deleted` | Cancela e corta o acesso |
+
+---
+
+## Assinatura
+
+Rotas do próprio assinante. `GET /api/assinatura/planos` é a única **pública** — é a
+vitrine de preços da landing page.
+
+### `GET /api/assinatura`
+
+Estado atual: `status`, `acesso_liberado`, plano, data de renovação e o motivo do
+bloqueio quando houver.
+
+### `GET /api/assinatura/limites`
+
+```json
+{ "limite_clientes": 1000, "clientes_no_plano": 43, "restantes": 957, "excedeu": false }
+```
+
+Consultado pelo painel antes de importar CSV, para barrar no cliente em vez de deixar
+a importação estourar o plano pela metade.
+
+### `GET /api/assinatura/uso`
+
+Mensagens enviadas no mês contra o limite do plano.
+
+### `POST /api/assinatura/checkout`
+
+```json
+{ "plano": "pro" }
+```
+
+Devolve `{ "url": "https://checkout.stripe.com/..." }` para o navegador redirecionar.
+**Não ativa nada sozinho** — quem ativa é o webhook, depois da confirmação.
+
+### `POST /api/assinatura/portal`
+
+Portal do Stripe para trocar cartão, ver faturas e cancelar sozinho.
+
+### `POST /api/assinatura/pagamentos`
+
+Histórico de cobrança da conta.
+
+---
+
 ## Não documentado (não existe)
 
 Estas rotas são referenciadas em versões anteriores e **não estão implementadas**:
@@ -526,3 +704,4 @@ Estas rotas são referenciadas em versões anteriores e **não estão implementa
 | `POST /api/reativacao/disparar` | Disparo manual, fora do horário do beat |
 | `GET /api/envios` | Log de mensagens enviadas |
 | `DELETE /api/agendamentos/{id}` | Cancelar um horário |
+| `POST /api/admin/contas/{id}` | **Excluir** conta. Hoje só suspende, nunca apaga |

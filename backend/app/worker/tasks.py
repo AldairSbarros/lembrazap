@@ -1,10 +1,14 @@
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+log = logging.getLogger(__name__)
+
 from app.db.database import SessionLocal
 from app.db.models import Tenant, Agenda, FilaEnvio, Cliente
 from app.services import evolution
+from app.services.assinatura import pode_operar
 from app.services.config_disparo import ler_regras
 from app.services.mensagem import (
     _PADRAO_LEMBRETE,
@@ -43,6 +47,14 @@ def verificar_e_disparar_lembretes():
                 regras = ler_regras(tenant.config)
 
                 if regras.envios_pausados:
+                    continue
+
+                # Conta suspensa, inadimplente ou com teste vencido não entra no
+                # disparo. `envios_pausados` é decisão do próprio negócio; o acesso
+                # bloqueado é decisão de cobrança e vale mais, então vem primeiro.
+                liberado, motivo = pode_operar(tenant)
+                if not liberado:
+                    log.info("[worker] tenant %s pulado: %s", tenant.id, motivo)
                     continue
 
                 # Janela de envio: agendamentos previstos para daqui a X horas,
@@ -126,6 +138,11 @@ def reativar_clientes_inativos():
                 regras = ler_regras(tenant.config)
 
                 if not regras.reativacao_ativa or regras.envios_pausados:
+                    continue
+
+                liberado, motivo = pode_operar(tenant)
+                if not liberado:
+                    log.info("[worker] reativação: tenant %s pulado: %s", tenant.id, motivo)
                     continue
 
                 if not tenant.instancia:
@@ -215,6 +232,17 @@ def processar_item_fila(fila_id: str):
             fila.status = "falha"
             fila.erro = "Instância do WhatsApp não configurada."
             db.commit()
+            return
+
+        # Última barreira de cobrança: a mensagem pode ter sido enfileirada antes da
+        # suspensão e só agora ser despachada. Checagem no momento do envio, e não
+        # só na hora de enfileirar, porque a fila tem latência.
+        liberado, motivo = pode_operar(tenant)
+        if not liberado:
+            fila.status = "falha"
+            fila.erro = f"Envio bloqueado: {motivo}"
+            db.commit()
+            log.info("[worker] envio de %s barrado para tenant %s", fila_id, tenant.id)
             return
 
         # Última barreira do opt-out: mesmo que algo tenha enfileirado errado,
